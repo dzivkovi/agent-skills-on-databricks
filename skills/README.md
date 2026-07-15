@@ -22,6 +22,25 @@ document-insights/
   scripts/analyze.py       # the deterministic half (pure Python, no LLM)
 ```
 
+## readability (MVP-1b, working - the second independent skill)
+
+The second real skill, added to prove the runner is skill-agnostic (issue #6). Same two-half
+shape, a DIFFERENT contract: the deterministic half
+([`readability/scripts/analyze.py`](readability/scripts/analyze.py)) computes exact readability
+scores (Flesch Reading Ease, Flesch-Kincaid grade, syllable and hard-word counts); the LLM half
+turns those scores into plain-language coaching (audience + the two edits that most lower the
+grade). Pure stdlib, no extra runtime dependency.
+
+Both skills are published INDEPENDENTLY to the shared volume and consumed INDEPENDENTLY by the
+job (`--skill-dir` selects one); updating one never touches the other. `tests/` proves this
+without a workspace, and the live deployed job was verified consuming each skill from the volume.
+
+**Each skill can pick its own model.** A skill may declare `model:` in its `SKILL.md`
+front-matter (readability does); the runner honors it unless an explicit `--model` is passed.
+Precedence: explicit `--model` (CLI/job) -> the skill's declared `model:` -> the built-in
+default. So a cheap skill stays on free-tier `gpt-oss` while a paid skill could ask for
+`databricks-claude-opus-4-8`, all by configuration - no code change.
+
 ## How a job runs a skill
 
 [`../src/run_skill.py`](../src/run_skill.py) is the skill runner. Given `--skill-dir`, it:
