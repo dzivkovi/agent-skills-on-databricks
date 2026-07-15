@@ -80,7 +80,7 @@ do the same with a third Unity Catalog volume.
   guard hiccup never blocks legitimate content. (The platform-native alternative is the AI Gateway
   guardrails config in Part 1; the LLM classifier is the portable, free-tier path.)
 
-Verified by [`scripts/reject_test.py`](../scripts/reject_test.py): both a whitespace-only input
+Verified by [`scripts/e2e_reject_test.py`](../scripts/e2e_reject_test.py): both a whitespace-only input
 (reason "empty input") AND a document with PII (reason "content guardrail flagged pii: ...") are
 quarantined in `rejected/` with a `.reason.txt`, the job returns `SUCCESS`, and no output is
 produced - while a benign document still passes through (no false reject).
@@ -95,6 +95,26 @@ committed - PII detection is the enterprise guardrail, and it tests cleanly and 
                          |
                          +-------- (bad/blocked) -> rejected volume + .reason.txt   (dead-letter)
 ```
+
+### See it yourself
+
+Run the negative test with `--keep` so the quarantined files stay put, then inspect them:
+
+```bash
+databricks bundle deploy -p coldstart
+python scripts/e2e_reject_test.py --profile coldstart --keep
+```
+
+You get per-step progress for two cases (empty, and fake-PII), each ending in the input being
+quarantined while the job still returns `SUCCESS`. Then open the **rejected** volume in Catalog
+Explorer - the script prints the exact URL, of the form:
+
+```text
+https://<your-workspace-host>/explore/data/volumes/<catalog>/<schema>/rejected
+```
+
+Each rejected input sits there next to a `<name>.reason.txt` explaining why ("empty input" or
+"content guardrail flagged pii: ..."). That is the dead-letter queue an operator would review.
 
 ### When to graduate
 
