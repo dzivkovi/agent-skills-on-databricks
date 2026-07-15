@@ -33,7 +33,9 @@ grade). Pure stdlib, no extra runtime dependency.
 
 Both skills are published INDEPENDENTLY to the shared volume and consumed INDEPENDENTLY by the
 job (`--skill-dir` selects one); updating one never touches the other. `tests/` proves this
-without a workspace, and the live deployed job was verified consuming each skill from the volume.
+without a workspace, and the live deployed job was verified consuming each skill from the volume
+(`scripts/e2e_multiskill_test.py`). Per-skill model *selection* (below) is unit-verified;
+skill *selection* is both unit- and live-verified.
 
 **Each skill can pick its own model.** A skill may declare `model:` in its `SKILL.md`
 front-matter (readability does); the runner honors it unless an explicit `--model` is passed.

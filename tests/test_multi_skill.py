@@ -29,6 +29,30 @@ def test_each_skill_can_pick_its_own_model():
     assert run_skill.resolve_model(None, fm_none) == (run_skill.DEFAULT_MODEL, "built-in default")
 
 
+def test_output_path_is_skill_namespaced_so_two_skills_do_not_collide():
+    # The collision fix: same input + same day, two skills -> two DISTINCT output paths.
+    di = run_skill.output_path("/out", "/in/weekly-update.md", "document-insights", "2026-07-15")
+    rb = run_skill.output_path("/out", "/in/weekly-update.md", "readability", "2026-07-15")
+    assert di != rb
+    assert di == "/out/weekly-update-document-insights-2026-07-15.md"
+    assert "readability" in rb and rb.endswith("-2026-07-15.md")
+
+
+def test_skill_declared_model_edges():
+    # Top-level (non-metadata) model: is supported.
+    assert run_skill._skill_declared_model("---\nmodel: foo\nname: x\n---\nbody\n") == "foo"
+    # A `model:` line in the BODY must NOT be picked up (front-matter only).
+    body_only = "---\nname: x\n---\n\nSome prose.\nmodel: databricks-claude-opus-4-8\n"
+    assert run_skill._skill_declared_model(body_only) is None
+    # A `---` horizontal rule in the body must not shift front-matter parsing.
+    with_hr = "---\nname: x\nmetadata:\n  model: bar\n---\nbody\n---\nmore body\n"
+    assert run_skill._skill_declared_model(with_hr) == "bar"
+    # No closing fence -> treat as no declaration (front_matter empty), never crash.
+    assert run_skill._skill_declared_model("---\nname: x still open\n") is None
+    # Not front-matter at all.
+    assert run_skill._skill_declared_model("# Just a heading\nmodel: nope\n") is None
+
+
 def test_readability_skill_declares_its_model():
     # The shipped readability skill demonstrates the feature (document-insights uses the default).
     rb_md = (ROOT / "skills" / "readability" / "SKILL.md").read_text(encoding="utf-8")

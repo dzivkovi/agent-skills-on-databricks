@@ -27,6 +27,14 @@ def test_at_least_two_skills_present():
     assert len(SKILLS) >= 2, f"expected 2+ skills, found {[s.name for s in SKILLS]}"
 
 
+def _front_matter(text: str) -> str:
+    """The leading ---...--- block only (same boundary logic the runner uses)."""
+    if not text.startswith("---"):
+        return ""
+    end = text.find("\n---", 3)
+    return text[3:end] if end != -1 else ""
+
+
 @pytest.mark.parametrize("skill_dir", SKILLS, ids=lambda p: p.name)
 def test_skill_has_required_shape(skill_dir):
     assert (skill_dir / "SKILL.md").is_file()
@@ -34,7 +42,10 @@ def test_skill_has_required_shape(skill_dir):
         f"{skill_dir.name} missing scripts/analyze.py"
     text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     assert text.startswith("---"), f"{skill_dir.name} SKILL.md needs YAML front-matter"
-    assert "name:" in text and "description:" in text
+    # name:/description: must be IN the front-matter block, not merely somewhere in the body.
+    fm = _front_matter(text)
+    assert "name:" in fm and "description:" in fm, \
+        f"{skill_dir.name} front-matter missing name:/description:"
 
 
 @pytest.mark.parametrize("skill_dir", SKILLS, ids=lambda p: p.name)

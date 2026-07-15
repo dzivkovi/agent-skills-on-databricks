@@ -112,6 +112,14 @@ def _skill_declared_model(skill_md_text: str):
     return m.group(1).strip().strip("\"'") if m else None
 
 
+def output_path(out_dir: str, in_path: str, skill_name: str, today: str) -> str:
+    """Skill-namespaced report path: <out_dir>/<stem>-<skill>-<date>.md. The skill segment is
+    what stops two skills over the same input on the same day from overwriting each other
+    (document-insights and readability would otherwise both write <stem>-insights-<date>.md)."""
+    stem = os.path.splitext(os.path.basename(in_path))[0]
+    return f"{out_dir}/{stem}-{skill_name}-{today}.md"
+
+
 def resolve_model(cli_model, skill_md_text: str):
     """Pick the serving endpoint for this run, most explicit wins. Returns (model, source):
 
@@ -165,10 +173,13 @@ def guard_content(w: WorkspaceClient, model: str, text: str):
     injectable; it is a portable demo control, not a hard boundary (see that doc's Known limits).
     """
     try:
+        # Reasoning headroom (same reason as the reading call): a reasoning model spends tokens
+        # thinking before its tiny JSON verdict, so too small a budget yields empty output and the
+        # guard fails OPEN - silently disabling PII/unsafe screening. Keep this generous.
         raw = call_llm(w, model, [
             {"role": "system", "content": CONTENT_GUARD_PROMPT},
             {"role": "user", "content": "DOCUMENT:\n" + text},
-        ], max_tokens=400)
+        ], max_tokens=1000)
         verdict = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
     except Exception as e:  # noqa: BLE001 - guard call failed OR output unparseable -> fail open
         log.warning("content guard unavailable/unparseable, failing open: %s", e)
@@ -256,7 +267,7 @@ def main():
             "the heading and the table). Reference the exact metrics where natural, but never restate or "
             "recompute a number as if you produced it."},
     ]
-    log.debug("calling model %s", args.model)
+    log.debug("calling model %s", model)   # the resolved model, not args.model (None when omitted)
     # Headroom for reasoning models (e.g. gpt-oss): they spend tokens thinking before the
     # answer, so too small a budget can return empty content (the extract_text sentinel).
     reading = call_llm(w=w, model=model, messages=messages, max_tokens=1500)
@@ -264,7 +275,6 @@ def main():
 
     # 3) Combined, clearly-labeled report.
     today = datetime.date.today().isoformat()
-    stem = os.path.splitext(os.path.basename(args.in_path))[0]
     skill_name = skill_dir.name
     title = skill_name.replace("-", " ").replace("_", " ").title()
     metrics_rows = "\n".join(f"| {k.replace('_', ' ')} | {v} |" for k, v in metrics.items())
@@ -277,9 +287,7 @@ def main():
         f"## Reading (interpreted by the LLM)\n\n{reading}\n"
     )
     os.makedirs(args.out_dir, exist_ok=True)
-    # Skill-namespaced so two skills over the same input on the same day do not collide
-    # (document-insights and readability would otherwise both write <stem>-insights-<date>.md).
-    out_path = f"{args.out_dir}/{stem}-{skill_name}-{today}.md"
+    out_path = output_path(args.out_dir, args.in_path, skill_name, today)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(report)
     log.info("WROTE %s", out_path)

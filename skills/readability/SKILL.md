@@ -31,13 +31,15 @@ Here the exact half computes readability scores; the LLM half coaches how to imp
 
 ## Output contract
 
-Produce markdown with two clearly-labeled sections so a reader can see the seam:
+The runner builds a two-section report and owns the headings and the metrics table: a
+**Metrics (computed by code - exact)** section (the exact `analyze.py` numbers as a
+metric-value table) followed by a **Reading (interpreted by the LLM)** section. Your job is
+only the body of that Reading section - no headings, no table. In it:
 
-- **Scores (computed by code - exact)** - a table of the numbers from `analyze.py`, with a
-  one-line reading of what the Flesch Reading Ease band means (90-100 very easy, 60-70 plain
-  English, 30-50 difficult, 0-30 very difficult).
-- **Coaching (interpreted by the LLM)** - the audience read plus the top two edits to lower
-  the grade, each tied to a specific metric.
+- open with the likely audience and what the Flesch Reading Ease band means (90-100 very easy,
+  60-70 plain English, 30-50 difficult, 0-30 very difficult), tied to the exact score;
+- then give the top two edits that would most lower the Flesch-Kincaid grade (shorten the
+  longest sentences, swap the multi-syllable words), each tied to a specific metric.
 
 Use hyphens, not em-dashes. Keep it concise.
 
