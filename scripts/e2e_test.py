@@ -60,7 +60,7 @@ def main():
     token = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     in_path = f"/Volumes/{args.catalog}/{args.schema}/input/e2e-{token}.md"
     out_dir = f"/Volumes/{args.catalog}/{args.schema}/output"
-    out_prefix = f"e2e-{token}-summary"
+    out_prefix = f"e2e-{token}-insights"
     started = time.time()
 
     def step(msg):
@@ -75,11 +75,26 @@ def main():
     w.files.upload(in_path, io.BytesIO(payload), overwrite=True)
     step("uploaded test file to the input volume")
 
-    # 2) TRIGGER: run the deployed job, overriding its params to point at OUR file.
+    # 2) TRIGGER: run the deployed job, PRESERVING its deployed parameters (especially
+    #    --skill-dir, which points at the deployed skill folder) and overriding only the
+    #    I/O + model. A wholesale python_params replacement would drop --skill-dir.
+    deployed = list(w.jobs.get(job_id=job_id).settings.tasks[0].spark_python_task.parameters or [])
+
+    def _override(params, flag, value):
+        p = list(params)
+        if flag in p:
+            p[p.index(flag) + 1] = value
+        else:
+            p += [flag, value]
+        return p
+
+    params = _override(deployed, "--in-path", in_path)
+    params = _override(params, "--out-dir", out_dir)
+    params = _override(params, "--model", args.model)
+
     step("triggering job run and waiting for terminal state...")
     run = w.jobs.run_now(
-        job_id=job_id,
-        python_params=["--model", args.model, "--in-path", in_path, "--out-dir", out_dir],
+        job_id=job_id, python_params=params,
     ).result(timeout=datetime.timedelta(minutes=args.timeout_min))
 
     state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"

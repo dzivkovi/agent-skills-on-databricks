@@ -31,3 +31,8 @@ work/
 
 # raw Claude Code session transcript (private, never commit)
 .session-archive/
+
+# --- Claude Code local skill install ---
+# The canonical skill lives in skills/. This is a per-developer link/copy of it into
+# Claude Code's discovery path, created by the "Run the skill in Claude Code" step.
+.claude/skills/

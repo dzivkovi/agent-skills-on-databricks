@@ -29,12 +29,12 @@ variables:
 resources:
   jobs:
     mvp0_weekly_report:
-      name: "[${bundle.target}] GenAI MVP-0 - weekly report"
+      name: "[${bundle.target}] document-insights skill"
 
       tasks:
-        - task_key: convert
+        - task_key: run_skill
           spark_python_task:
-            python_file: ./src/convert_document.py
+            python_file: ./src/run_skill.py
             # Task parameters arrive as argv; this is how the DAB variable
             # above reaches the running code (see argparse in the script).
             # The job reads --in-path from the INPUT volume and writes to the
@@ -46,6 +46,12 @@ resources:
               - "/Volumes/${var.catalog}/${var.schema}/input/weekly-update.md"
               - "--out-dir"
               - "/Volumes/${var.catalog}/${var.schema}/output"
+              # ${workspace.file_path} = the deployed bundle files dir. We pass the skill's
+              # absolute path because serverless runs the task via exec() with no __file__.
+              - "--skill-dir"
+              - "${workspace.file_path}/skills/document-insights"
+              - "--log-level"
+              - "INFO"          # set to DEBUG to see every step in the run logs
           # Free Edition runs on SERVERLESS compute. An "environment" is the
           # serverless equivalent of a cluster's installed libraries.
           environment_key: serverless_env

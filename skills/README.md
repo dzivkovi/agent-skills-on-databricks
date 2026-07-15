@@ -4,41 +4,47 @@ This folder holds [agentskills.io](https://agentskills.io) / Anthropic **Agent S
 each a folder with a `SKILL.md` (YAML front-matter + instructions), optionally plus
 `scripts/`, `references/`, and `assets/`. The same portable format Claude Code uses.
 
-## Status: empty on purpose (for now)
+## document-insights (MVP-1, working)
 
-MVP-0 (the current job in [`../src/convert_document.py`](../src/convert_document.py))
-does **not** run a skill yet. It calls the inside-Databricks LLM with a fixed
-instruction to prove the pipeline: `input volume -> LLM -> output volume`.
+The first real skill. It analyzes a text document and pairs:
 
-The first skill to migrate here is **branded-pptx** (turns a markdown document into a
-branded PowerPoint deck). It is NOT copied in yet because of a hard platform fact:
+- **Deterministic** ([`document-insights/scripts/analyze.py`](document-insights/scripts/analyze.py)):
+  exact word / character / sentence counts, reading time - facts an LLM cannot count reliably.
+- **Non-deterministic** (the LLM, guided by [`document-insights/SKILL.md`](document-insights/SKILL.md)):
+  sentiment, a one-line summary, and key themes - judgment the LLM is good at.
 
-## Why the skill is not just "dropped in and run"
+The output labels which half is code and which is the LLM, so an LLM guess never masquerades
+as a hard fact. This is the whole point of a skill, in the smallest honest form.
 
-branded-pptx's engine is `pptxgenjs` (Node.js) + LibreOffice + Poppler, driven by a
-multimodal vision-in-the-loop QA cycle. **None of those run on Databricks Free Edition**,
-which is serverless-only (no Node, no system packages, no classic clusters). So a
-faithful "run the skill as-is" needs a PAID tier + classic compute (that is MVP-2).
-
-The free-tier path (MVP-1) is a **re-cut**: re-implement branded-pptx's brand tokens and
-layout helpers from its `SKILL.md` in pure-Python `python-pptx` (which DOES run on
-serverless), producing a real `.pptx` without Node or LibreOffice. Lower fidelity (no
-self-correcting vision loop), but it runs on this account today.
-
-## Layout when a skill lands here
-
-```
-skills/
-  branded-pptx/
-    SKILL.md            # the portable skill definition
-    scripts/            # deterministic helpers (re-cut for python-pptx on free tier)
-    assets/             # brand fonts/logos, pre-staged (avoids runtime downloads)
-    references/         # supporting docs the skill loads on demand
+```text
+document-insights/
+  SKILL.md                 # what to do and when (instructions)
+  scripts/analyze.py       # the deterministic half (pure Python, no LLM)
 ```
 
-## How a job will load a skill (MVP-1)
+## How a job runs a skill
 
-The DAB bundles `skills/` into the workspace alongside `src/`. The job reads the target
-`SKILL.md`, follows its instructions in code, and reads the input document from the
-**input volume** (`/Volumes/workspace/genai/input/`), writing the deck to the **output
-volume** (`/Volumes/workspace/genai/output/`).
+[`../src/run_skill.py`](../src/run_skill.py) is the skill runner. Given `--skill-dir`, it:
+
+1. imports and runs the skill's `scripts/analyze.py` for exact metrics,
+2. reads `SKILL.md` and calls the inside-Databricks LLM for the interpretive read,
+3. writes a combined, labeled report to the output volume.
+
+The DAB passes the deployed skill path via `--skill-dir ${workspace.file_path}/skills/document-insights`
+(serverless runs the task with no `__file__`, so the path is passed in explicitly).
+
+## Coming next: branded-pptx (MVP-2 / MVP-3)
+
+branded-pptx turns a markdown document into a branded PowerPoint deck. Its real engine is
+`pptxgenjs` (Node.js) + LibreOffice + Poppler with a multimodal vision-in-the-loop QA cycle -
+**none of which run on Databricks Free Edition** (serverless-only: no Node, no system packages).
+So:
+
+- **MVP-2** re-cuts it in pure-Python `python-pptx` (runs on free serverless; lower fidelity, no vision loop).
+- **MVP-3** runs it faithfully on a paid tier with classic compute (the self-correcting vision loop).
+
+## Reuse note
+
+Today the skill is bundled with the DAB and deploys alongside the job. Making a skill
+**install-once, reuse-everywhere** across a Databricks workspace (like `~/.claude/skills/` in
+Claude Code) is an open design question - see [`../docs/`](../docs/) for the research.

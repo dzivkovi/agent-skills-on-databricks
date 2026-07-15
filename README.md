@@ -1,4 +1,4 @@
-# Agent Skills on Databricks - a working starter
+# Agent Skills on Databricks: run Anthropic SKILL.md as a governed Lakeflow job
 
 A minimal, reproducible example of running an AI document pipeline on Databricks:
 a scheduled job that reads a document from an **input volume**, transforms it with an
@@ -37,9 +37,9 @@ small, honest steps (see [The MVP ladder](#the-mvp-ladder)).
 
 ```text
 databricks.yml              # THE bundle: variables, the job, the schedule, the target
-src/convert_document.py     # the job task: input -> LLM -> output
-samples/weekly-update.md    # a sample INPUT document to convert
-skills/                     # where Agent Skills (SKILL.md folders) will live (see skills/README.md)
+src/run_skill.py            # the job task: runs a skill (deterministic metrics + LLM read)
+samples/weekly-update.md    # a sample INPUT document to analyze
+skills/document-insights/   # the first real skill: SKILL.md + scripts/analyze.py
 scripts/setup_uc.py         # one-command Unity Catalog setup (schema + volumes, idempotent)
 scripts/upload_input.py     # helper: put a local file into the input volume (SDK; Windows-safe)
 scripts/download_outputs.py # helper: list/download the output volume (SDK; Windows-safe)
@@ -175,19 +175,61 @@ rm -rf _output _downloaded-report.md .databricks   # regenerated on next run/dep
 Nothing here touches the Databricks-hosted models (they are shared platform endpoints), so
 there is no model endpoint to delete.
 
+## Run the skill in Claude Code first (portability litmus test, no zip)
+
+Agent Skills are an open standard, so the same `skills/document-insights/` folder that runs on
+Databricks also runs in Claude Code on your laptop. Install it there first - **if the skill does
+not trigger in Claude Code, it will not work in Databricks or anywhere else.** There is no
+zipping or packaging: Claude Code discovers a skill from a folder on its skills path.
+
+Claude Code looks in `.claude/skills/` (this project) and `~/.claude/skills/` (personal, all
+projects). Point that path at this repo's canonical skill in `skills/` - ideally a **link**, so
+there is one source of truth rather than a copy. `.claude/skills/` is gitignored here (a
+per-developer install; the committed skill stays in `skills/`).
+
+```bash
+# macOS / Linux - a real symlink (Claude Code follows it, zero duplication):
+mkdir -p .claude/skills
+ln -s ../../skills/document-insights .claude/skills/document-insights
+
+# Windows - heads up: `ln -s` in Git Bash SILENTLY COPIES (no link) unless Developer Mode is on.
+# For a true no-duplication link with NO admin rights, use a directory junction:
+#   cmd /c mklink /J .claude\skills\document-insights skills\document-insights
+# ...or just accept a copy (simplest, but duplicates):
+#   cp -r skills/document-insights .claude/skills/
+```
+
+Then **restart Claude Code** (a newly created top-level skills dir is only watched after a
+restart). Now type `/document-insights`, or just ask: "analyze samples/weekly-update.md with the
+document-insights skill." If Claude runs `analyze.py` and returns the exact metrics plus a
+sentiment read, the skill is sound - and portable.
+
 ## The MVP ladder
 
 This repo is honest about what works where. It grows in stages:
 
 | MVP | What it does | Status |
 | --- | --- | --- |
-| **MVP-0** | input doc -> LLM -> output doc (proves the pipeline; no skill yet) | working (this repo) |
-| **MVP-1** | run the **branded-pptx** skill, re-cut in pure-Python `python-pptx`, to emit a real `.pptx` on free serverless | next |
-| **MVP-2** | run branded-pptx **faithfully** (Node + LibreOffice + Claude Agent SDK) | needs a paid tier + classic compute |
+| **MVP-0** | input doc -> LLM -> output doc (plumbing only, no skill) | done |
+| **MVP-1** | run a real skill: **document-insights** - deterministic metrics (code) + sentiment/themes (LLM), labeled by half | working (this repo) |
+| **MVP-2** | the **branded-pptx** skill, re-cut in pure-Python `python-pptx`, to emit a real `.pptx` on free serverless | next |
+| **MVP-3** | run branded-pptx **faithfully** - the self-correcting vision-in-the-loop QA (Node + LibreOffice) | needs a paid tier + classic compute |
 
 Why the staging: branded-pptx's real engine (Node `pptxgenjs` + LibreOffice + a vision QA
 loop) cannot run on Databricks Free Edition, which is serverless-only. See
 [`skills/README.md`](skills/README.md) for the full explanation.
+
+### How the LLM and agents are invoked here (pure Databricks)
+
+The model is called the **Databricks-native** way: the job hits a Databricks-served endpoint
+through the Databricks SDK (`WorkspaceClient`) - no external API key, no vendor client library.
+To expose a skill as a *queryable, governed agent* (instead of a batch job), the Databricks path
+is its **own Mosaic AI Agent Framework**: wrap the logic in an MLflow `ResponsesAgent`, publish
+with `databricks.agents.deploy(...)`, and query it with the Databricks OpenAI client - all
+inside Unity Catalog. The **Claude Agent SDK is not part of this** - it is an Anthropic laptop
+harness; on Databricks the model is always served within the platform, so there is no vendor
+intermixing at the LLM layer. Full fact-check in
+[docs/agent-invocation-on-databricks.md](docs/agent-invocation-on-databricks.md).
 
 ## Portability notes
 
