@@ -17,10 +17,10 @@ small, honest steps (see [The MVP ladder](#the-mvp-ladder)).
   drop a document   ->   INPUT volume                                    ^
                               |                                          |
                               v                                          |
-                         Lakeflow Job (weekly, or on demand)            |
-                              |  calls a model hosted INSIDE Databricks |
+                         Lakeflow Job (weekly, or on demand)             |
+                              |  calls a model hosted INSIDE Databricks  |
                               v                                          |
-                         OUTPUT volume  ------ download ----------------+
+                         OUTPUT volume  ------ download -----------------+
 ```
 
 - **Unity Catalog volume** = a governed folder of files. Two of them here:
@@ -127,11 +127,13 @@ why `bundle run mvp0_weekly_report` above is correct - the key is legacy, the di
 ## Where the LLM comes from (there is no endpoint to create)
 
 The surprising part if you are used to Model Serving: **you never created the LLM endpoint, and
-you never will.** `databricks-gpt-oss-120b` is a **Foundation Model API** - a catalog of models
-Databricks pre-hosts and manages for you, billed per token, addressable by name. Your workspace
-already has ~18 of them (`databricks-claude-opus-4-8`, `databricks-glm-5-2`,
-`databricks-gemini-3-5-flash`, embedding models, ...), each backed by a read-only model in the
-`system.ai.*` catalog. No cluster, no config, no endpoint slot used.
+you never will.** `databricks-gpt-oss-120b` is a
+**[Foundation Model API](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis)** -
+a catalog of models Databricks pre-hosts and manages for you, billed per token, addressable by
+name. Your workspace already has ~18 of them - see the
+[full, frequently-updated list of hosted models](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/supported-models)
+(`databricks-claude-opus-4-8`, `databricks-glm-5-2`, embedding models, ...) - each backed by a
+read-only model in the `system.ai.*` catalog. No cluster, no config, no endpoint slot used.
 
 - **Find it in the UI:** left nav **Serving** -> the endpoints list -> search `databricks-gpt-oss-120b`.
   It sits among the other `databricks-*` foundation models. These are distinct from a **custom
@@ -140,9 +142,10 @@ already has ~18 of them (`databricks-claude-opus-4-8`, `databricks-glm-5-2`,
 - **How the job calls it:** a POST to `https://<host>/serving-endpoints/databricks-gpt-oss-120b/invocations`
   with the job's ambient identity (see [`src/run_skill.py`](src/run_skill.py)). Nothing to deploy.
 - **Free-tier caveat:** premium models (`databricks-claude-*`, `databricks-gemini-*`,
-  `databricks-gpt-5-6-*`) return `rate limit of 0` until you enable a paid tier; the open-weights
-  ones (`databricks-gpt-oss-120b`, `databricks-glm-5-2`) work today. See
-  [docs/free-edition.md](docs/free-edition.md).
+  `databricks-gpt-5-6-*`) return `rate limit of 0` (a
+  [Foundation Model APIs quota](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/limits))
+  until you enable a paid tier; the open-weights ones (`databricks-gpt-oss-120b`,
+  `databricks-glm-5-2`) work today. See [docs/free-edition.md](docs/free-edition.md).
 
 ## Swapping the model (free tier vs paid)
 
@@ -285,3 +288,30 @@ Set these as environment variables on the compute (see the commented note in
   `databricks.yml` is the one workspace-specific line; set it to your workspace URL.
 - **Renaming `bundle.name`** - run `databricks bundle destroy` under the OLD name first, or
   the previously deployed job is orphaned under the old deployment path.
+
+## References
+
+The Databricks docs behind everything above - these pages update often, so trust the source, not
+this README:
+
+- **Foundation Model APIs** (the LLMs you call by name):
+  [overview](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis) ·
+  [full list of hosted models](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/supported-models) ·
+  [rate limits and quotas](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/limits) ·
+  [REST API reference](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/api-reference)
+- **Model Serving** (how endpoints are queried):
+  [query a serving endpoint](https://docs.databricks.com/api/workspace/servingendpoints/query) ·
+  [Anthropic Messages API on Databricks](https://docs.databricks.com/aws/en/machine-learning/model-serving/query-anthropic-messages)
+- **Databricks Asset Bundles / DABs** (the `databricks.yml` deploy model):
+  [resources](https://docs.databricks.com/aws/en/dev-tools/bundles/resources) ·
+  [examples](https://docs.databricks.com/aws/en/dev-tools/bundles/examples) ·
+  [bundle CLI](https://docs.databricks.com/aws/en/dev-tools/cli/bundle-commands)
+- **Unity Catalog Volumes** (the input/output file stores):
+  [volumes](https://docs.databricks.com/aws/en/volumes/)
+- **Agent Skills** (the open `SKILL.md` standard):
+  [agentskills.io](https://agentskills.io) ·
+  [Claude Code skills docs](https://code.claude.com/docs/en/skills)
+- **Deploying agents the Databricks way** (Mosaic AI Agent Framework, and why not the Claude Agent SDK):
+  see [docs/agent-invocation-on-databricks.md](docs/agent-invocation-on-databricks.md)
+- **Free Edition limits** (serverless-only, which models work): sourced in
+  [docs/free-edition.md](docs/free-edition.md)

@@ -14,7 +14,7 @@ Consequences:
   `environments.spec.dependencies`.
 
 This is why the faithful branded-pptx skill (Node `pptxgenjs` + LibreOffice + a vision
-QA loop) cannot run here, and why MVP-1 re-cuts it in pure-Python `python-pptx`.
+QA loop) cannot run here, and why MVP-2 re-cuts it in pure-Python `python-pptx`.
 
 ## LLMs: open-weights included, premium models gated
 
@@ -43,4 +43,11 @@ inside the workspace.
 ## Upgrade path
 
 Enabling a paid tier unlocks the premium models (swap the `llm_endpoint` variable to
-`databricks-claude-opus-4-8`) and classic compute (needed for the faithful MVP-2).
+`databricks-claude-opus-4-8`) and classic compute (needed for the faithful MVP-3).
+
+## Sources
+
+The model list and the rate-limit gate change over time - verify against the source:
+
+- Foundation Model APIs, full hosted-model list: https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/supported-models
+- Foundation Model APIs, rate limits and quotas (the `rate limit of 0` gate): https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/limits
