@@ -14,18 +14,18 @@ small, honest steps (see [The MVP ladder](#the-mvp-ladder)).
 ```text
   you / a user                Databricks (cloud)                     you / a user
   -----------                 ------------------                     -----------
-  drop a document   ->   INBOX volume                                    ^
+  drop a document   ->   INPUT volume                                    ^
                               |                                          |
                               v                                          |
                          Lakeflow Job (weekly, or on demand)            |
                               |  calls a model hosted INSIDE Databricks |
                               v                                          |
-                         OUTBOX volume  ------ download ----------------+
+                         OUTPUT volume  ------ download ----------------+
 ```
 
 - **Unity Catalog volume** = a governed folder of files. Two of them here:
-  `workspace.genai.inbox` (drop documents in) and `workspace.genai.deliverables`
-  (pick results up). Paths: `/Volumes/workspace/genai/{inbox,deliverables}`.
+  `workspace.genai.input` (drop documents in) and `workspace.genai.output`
+  (pick results up). Paths: `/Volumes/workspace/genai/{input,output}`.
 - **Lakeflow Job** = tasks + an optional schedule. Ours has one Python task and a
   weekly timer that ships PAUSED (you trigger it by hand until you trust it).
 - **LLM inside Databricks** = a Foundation Model API endpoint (`databricks-...`).
@@ -37,12 +37,12 @@ small, honest steps (see [The MVP ladder](#the-mvp-ladder)).
 
 ```text
 databricks.yml              # THE bundle: variables, the job, the schedule, the target
-src/convert_document.py     # the job task: inbox -> LLM -> outbox
+src/convert_document.py     # the job task: input -> LLM -> output
 samples/weekly-update.md    # a sample INPUT document to convert
 skills/                     # where Agent Skills (SKILL.md folders) will live (see skills/README.md)
 scripts/setup_uc.py         # one-command Unity Catalog setup (schema + volumes, idempotent)
-scripts/upload_input.py     # helper: put a local file into the inbox volume (SDK; Windows-safe)
-scripts/download_outputs.py # helper: list/download the outbox volume (SDK; Windows-safe)
+scripts/upload_input.py     # helper: put a local file into the input volume (SDK; Windows-safe)
+scripts/download_outputs.py # helper: list/download the output volume (SDK; Windows-safe)
 scripts/e2e_test.py         # black-box integration test: put -> run -> wait -> get -> assert
 docs/free-edition.md        # the tested Free Edition constraints that shaped this repo
 requirements-dev.txt        # local dev deps for the helper scripts
@@ -52,7 +52,7 @@ requirements-dev.txt        # local dev deps for the helper scripts
 ## Prerequisites
 
 1. A Databricks workspace (Free Edition is fine) with **Unity Catalog** enabled.
-2. **Databricks CLI** v1.5+ (`databricks --version`).
+2. **Databricks CLI** with Asset Bundle support (check with `databricks version`).
 3. An auth profile. This repo assumes one named `coldstart`; create yours with
    `databricks auth login --host https://YOUR-WORKSPACE.cloud.databricks.com`
    and either name it `coldstart` or pass `-p YOURPROFILE` on every command below.
@@ -77,21 +77,21 @@ databricks bundle validate -p coldstart
 # 2) create the job in the workspace (uploads src/ + skills/ + samples/)
 databricks bundle deploy -p coldstart
 
-# 3) put a document in the inbox (SDK helper avoids Windows path issues)
+# 3) put a document in the input (SDK helper avoids Windows path issues)
 python scripts/upload_input.py samples/weekly-update.md --profile coldstart
 
 # 4) run the job on demand (weekly schedule stays PAUSED until you unpause it)
 databricks bundle run mvp0_weekly_report -p coldstart
 
-# 5) get the result out of the outbox
+# 5) get the result out of the output
 python scripts/download_outputs.py --profile coldstart
-#    -> downloads to ./_outbox/ ; or view in the UI (see below)
+#    -> downloads to ./_output/ ; or view in the UI (see below)
 ```
 
 ## Test it end-to-end (no UI needed)
 
 `scripts/e2e_test.py` is a black-box integration test (not a unit test): it treats the
-volumes as an S3-like boundary, drops a uniquely-tagged file into the inbox, triggers the
+volumes as an S3-like boundary, drops a uniquely-tagged file into the input, triggers the
 deployed job, waits for a terminal state, retrieves the output, asserts it is correct, and
 cleans up. Exit code 0 = pass, 1 = fail (CI-ready).
 
@@ -107,10 +107,21 @@ for inspection.
 
 ## See it in the Databricks UI
 
-- **Catalog Explorer** -> `workspace` -> `genai` -> `deliverables`: your output files,
-  with a one-click Download. This is the whole delivery story for a Databricks-native user.
-- **Workflows** (Lakeflow Jobs) -> the `... GenAI MVP-0 ...` job: run history, logs, the
-  schedule. Everything you see here was created by `databricks.yml`, not by hand.
+**Find your volumes (works in any workspace):** in the left sidebar click **Catalog** (the
+database/cylinder icon), then expand your catalog -> schema -> **Volumes** -> the volume ->
+its **Files** area. Files there have a one-click **Download** - this is the whole delivery
+story for a Databricks-native user. The direct URL pattern is:
+
+```text
+https://<your-workspace-host>/explore/data/volumes/<catalog>/<schema>/<volume>
+```
+
+For this repo's defaults that is `.../explore/data/volumes/workspace/genai/output` (results)
+and `.../input` (drop zone). Swap `<your-workspace-host>` for your own workspace URL.
+
+**Watch the job:** left sidebar -> **Workflows** (Lakeflow Jobs) -> the `... GenAI MVP-0 ...`
+job for run history, logs, and the schedule. Everything you see there was created by
+`databricks.yml`, not by hand.
 
 ## Swapping the model (free tier vs paid)
 
@@ -150,15 +161,15 @@ The Unity Catalog schema and volumes are NOT bundle-managed (you made them with
 delete the volumes first, then the now-empty schema:
 
 ```bash
-databricks volumes delete workspace.genai.deliverables -p coldstart
-databricks volumes delete workspace.genai.inbox        -p coldstart
+databricks volumes delete workspace.genai.output -p coldstart
+databricks volumes delete workspace.genai.input        -p coldstart
 databricks schemas delete workspace.genai              -p coldstart
 ```
 
 ### Local scratch (optional)
 
 ```bash
-rm -rf _outbox _downloaded-report.md .databricks   # regenerated on next run/deploy
+rm -rf _output _downloaded-report.md .databricks   # regenerated on next run/deploy
 ```
 
 Nothing here touches the Databricks-hosted models (they are shared platform endpoints), so
@@ -169,8 +180,8 @@ there is no model endpoint to delete.
 This repo is honest about what works where. It grows in stages:
 
 | MVP | What it does | Status |
-|-----|--------------|--------|
-| **MVP-0** | inbox doc -> LLM -> outbox doc (proves the pipeline; no skill yet) | working (this repo) |
+| --- | --- | --- |
+| **MVP-0** | input doc -> LLM -> output doc (proves the pipeline; no skill yet) | working (this repo) |
 | **MVP-1** | run the **branded-pptx** skill, re-cut in pure-Python `python-pptx`, to emit a real `.pptx` on free serverless | next |
 | **MVP-2** | run branded-pptx **faithfully** (Node + LibreOffice + Claude Agent SDK) | needs a paid tier + classic compute |
 

@@ -15,16 +15,16 @@ variables:
     description: Databricks-hosted serving endpoint used for text generation.
     default: databricks-gpt-oss-120b   # free-tier callable today; Claude is rate-limited to 0 on free tier
   catalog:
-    description: Unity Catalog catalog holding the inbox/outbox volumes.
+    description: Unity Catalog catalog holding the input/output volumes.
     default: workspace
   schema:
-    description: Unity Catalog schema holding the inbox/outbox volumes.
+    description: Unity Catalog schema holding the input/output volumes.
     default: genai
 
 # ---------------------------------------------------------------------------
 # Resources = the things Databricks creates. Here: one Lakeflow Job with a
 # single Python task that calls the inside-Databricks LLM and writes a file
-# into the Unity Catalog volume we created (workspace.genai.deliverables).
+# into the Unity Catalog volume we created (workspace.genai.output).
 # ---------------------------------------------------------------------------
 resources:
   jobs:
@@ -37,15 +37,15 @@ resources:
             python_file: ./src/convert_document.py
             # Task parameters arrive as argv; this is how the DAB variable
             # above reaches the running code (see argparse in the script).
-            # The job reads --in-path from the INBOX volume and writes to the
-            # OUTBOX (--out-dir): the "input bucket -> output bucket" model.
+            # The job reads --in-path from the INPUT volume and writes to the
+            # OUTPUT (--out-dir): the "input bucket -> output bucket" model.
             parameters:
               - "--model"
               - "${var.llm_endpoint}"
               - "--in-path"
-              - "/Volumes/${var.catalog}/${var.schema}/inbox/weekly-update.md"
+              - "/Volumes/${var.catalog}/${var.schema}/input/weekly-update.md"
               - "--out-dir"
-              - "/Volumes/${var.catalog}/${var.schema}/deliverables"
+              - "/Volumes/${var.catalog}/${var.schema}/output"
           # Free Edition runs on SERVERLESS compute. An "environment" is the
           # serverless equivalent of a cluster's installed libraries.
           environment_key: serverless_env

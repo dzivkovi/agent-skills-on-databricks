@@ -1,36 +1,40 @@
 """
-List and download files from the OUTBOX (deliverables) Unity Catalog volume.
+List and download files from the OUTPUT Unity Catalog volume.
 
 Same reason as upload_input.py: the SDK avoids the Windows Git Bash path-munging
 that breaks `databricks fs cp` for /Volumes paths.
 
+Profile/catalog/schema default from environment variables (see .env.example) and
+can be overridden with flags, so this works in any workspace.
+
 Usage:
-    python scripts/download_outputs.py                 # list + download all to ./_outbox/
+    python scripts/download_outputs.py                 # list + download all to ./_output/
     python scripts/download_outputs.py --list-only     # just list
-    python scripts/download_outputs.py --profile coldstart --dest ./_outbox
+    python scripts/download_outputs.py [--profile P] [--catalog C] [--schema S] [--dest ./_output]
 """
 import argparse
 import os
 
 from databricks.sdk import WorkspaceClient
 
-OUTBOX = "/Volumes/workspace/genai/deliverables"
-
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", default="coldstart")
-    ap.add_argument("--dest", default="./_outbox")
+    ap.add_argument("--profile", default=os.environ.get("DATABRICKS_CONFIG_PROFILE", "coldstart"))
+    ap.add_argument("--catalog", default=os.environ.get("DATABRICKS_CATALOG", "workspace"))
+    ap.add_argument("--schema", default=os.environ.get("DATABRICKS_SCHEMA", "genai"))
+    ap.add_argument("--dest", default="./_output")
     ap.add_argument("--list-only", action="store_true")
     args = ap.parse_args()
 
+    output_vol = f"/Volumes/{args.catalog}/{args.schema}/output"
     w = WorkspaceClient(profile=args.profile)
-    entries = list(w.files.list_directory_contents(OUTBOX))
+    entries = list(w.files.list_directory_contents(output_vol))
     if not entries:
-        print(f"(outbox empty: {OUTBOX})")
+        print(f"(output empty: {output_vol})")
         return
 
-    print(f"Files in {OUTBOX}:")
+    print(f"Files in {output_vol}:")
     for e in entries:
         print(f"  {e.path}  ({e.file_size} bytes)")
     if args.list_only:

@@ -1,7 +1,7 @@
 # Data Platform Team - Raw Notes, Week of Jul 8-14 2026
 
-These are messy raw notes. The job reads this file from the inbox volume and asks
-the inside-Databricks LLM to turn it into a clean deliverable in the outbox volume.
+These are messy raw notes. The job reads this file from the input volume and asks
+the inside-Databricks LLM to turn it into a clean deliverable in the output volume.
 (Later, the branded-pptx skill will turn a document like this into a slide deck.)
 
 - migrated the ingestion pipeline to serverless, cut cluster cost roughly in half

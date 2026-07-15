@@ -8,7 +8,7 @@ each a folder with a `SKILL.md` (YAML front-matter + instructions), optionally p
 
 MVP-0 (the current job in [`../src/convert_document.py`](../src/convert_document.py))
 does **not** run a skill yet. It calls the inside-Databricks LLM with a fixed
-instruction to prove the pipeline: `inbox volume -> LLM -> outbox volume`.
+instruction to prove the pipeline: `input volume -> LLM -> output volume`.
 
 The first skill to migrate here is **branded-pptx** (turns a markdown document into a
 branded PowerPoint deck). It is NOT copied in yet because of a hard platform fact:
@@ -40,5 +40,5 @@ skills/
 
 The DAB bundles `skills/` into the workspace alongside `src/`. The job reads the target
 `SKILL.md`, follows its instructions in code, and reads the input document from the
-**inbox volume** (`/Volumes/workspace/genai/inbox/`), writing the deck to the **outbox
-volume** (`/Volumes/workspace/genai/deliverables/`).
+**input volume** (`/Volumes/workspace/genai/input/`), writing the deck to the **output
+volume** (`/Volumes/workspace/genai/output/`).

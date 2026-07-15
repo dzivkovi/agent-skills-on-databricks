@@ -1,5 +1,5 @@
 """
-One-command Unity Catalog setup: create the schema and the inbox/outbox volumes
+One-command Unity Catalog setup: create the schema and the input/output volumes
 this project needs. Idempotent - safe to run repeatedly (existing objects are skipped).
 
 Run this ONCE per workspace before the first `databricks bundle deploy`.
@@ -9,6 +9,7 @@ Usage:
     python scripts/setup_uc.py --profile coldstart --catalog workspace --schema genai
 """
 import argparse
+import os
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError
@@ -42,15 +43,15 @@ def ensure_volume(w, catalog, schema, name, comment):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", default="coldstart")
-    ap.add_argument("--catalog", default="workspace")
-    ap.add_argument("--schema", default="genai")
+    ap.add_argument("--profile", default=os.environ.get("DATABRICKS_CONFIG_PROFILE", "coldstart"))
+    ap.add_argument("--catalog", default=os.environ.get("DATABRICKS_CATALOG", "workspace"))
+    ap.add_argument("--schema", default=os.environ.get("DATABRICKS_SCHEMA", "genai"))
     args = ap.parse_args()
 
     w = WorkspaceClient(profile=args.profile)
     ensure_schema(w, args.catalog, args.schema)
-    ensure_volume(w, args.catalog, args.schema, "inbox", "Input documents dropped by users")
-    ensure_volume(w, args.catalog, args.schema, "deliverables", "Generated files for users to download")
+    ensure_volume(w, args.catalog, args.schema, "input", "Input documents dropped by users")
+    ensure_volume(w, args.catalog, args.schema, "output", "Generated files for users to download")
     print("\nUnity Catalog is ready. Next: databricks bundle deploy -p", args.profile)
 
 

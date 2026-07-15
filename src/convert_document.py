@@ -1,11 +1,11 @@
 """
-Job task: read an input document from the INBOX volume, transform it with an
-inside-Databricks LLM, and write the result to the OUTBOX (deliverables) volume.
+Job task: read an input document from the INPUT volume, transform it with an
+inside-Databricks LLM, and write the result to the OUTPUT volume.
 
 This is the "input bucket -> output bucket" pattern:
-    /Volumes/workspace/genai/inbox/*.md   (a user drops a document here)
+    /Volumes/workspace/genai/input/*.md   (a user drops a document here)
         -> LLM running inside Databricks (no external API key)
-    /Volumes/workspace/genai/deliverables/*.md   (the user downloads the result)
+    /Volumes/workspace/genai/output/*.md   (the user downloads the result)
 
 MVP-0 note: this does NOT yet run an agentskills.io skill. It calls the LLM with
 a fixed instruction to prove the whole pipeline. MVP-1 replaces the instruction
@@ -55,13 +55,13 @@ def call_llm(w: WorkspaceClient, model: str, messages: list, max_tokens: int = 1
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert an inbox document into a deliverable.")
+    parser = argparse.ArgumentParser(description="Convert an input document into a deliverable.")
     parser.add_argument("--model", default="databricks-gpt-oss-120b")
-    parser.add_argument("--in-path", default="/Volumes/workspace/genai/inbox/weekly-update.md")
-    parser.add_argument("--out-dir", default="/Volumes/workspace/genai/deliverables")
+    parser.add_argument("--in-path", default="/Volumes/workspace/genai/input/weekly-update.md")
+    parser.add_argument("--out-dir", default="/Volumes/workspace/genai/output")
     args = parser.parse_args()
 
-    # 1) READ the input document from the inbox volume (normal file IO; volumes
+    # 1) READ the input document from the input volume (normal file IO; volumes
     #    are mounted into the job's filesystem at /Volumes/...).
     with open(args.in_path, "r", encoding="utf-8") as f:
         source = f.read()
@@ -79,7 +79,7 @@ def main():
     ]
     body = call_llm(w=WorkspaceClient(), model=args.model, messages=messages)
 
-    # 3) WRITE the deliverable to the outbox volume for the user to download.
+    # 3) WRITE the deliverable to the output volume for the user to download.
     today = datetime.date.today().isoformat()
     stem = os.path.splitext(os.path.basename(args.in_path))[0]
     os.makedirs(args.out_dir, exist_ok=True)
