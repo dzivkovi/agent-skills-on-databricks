@@ -1,0 +1,86 @@
+# This is a Declarative Automation Bundle definition for Databricks.
+# The Databricks extension requires databricks.yml configuration file.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+
+bundle:
+  name: agent-skills-on-databricks
+
+# ---------------------------------------------------------------------------
+# Variables are the knobs you flip over time. The LLM endpoint is a variable
+# ON PURPOSE: the day you enable billing, change this ONE default to
+# databricks-claude-opus-4-8 and redeploy. Nothing else changes.
+# ---------------------------------------------------------------------------
+variables:
+  llm_endpoint:
+    description: Databricks-hosted serving endpoint used for text generation.
+    default: databricks-gpt-oss-120b   # free-tier callable today; Claude is rate-limited to 0 on free tier
+  catalog:
+    description: Unity Catalog catalog holding the inbox/outbox volumes.
+    default: workspace
+  schema:
+    description: Unity Catalog schema holding the inbox/outbox volumes.
+    default: genai
+
+# ---------------------------------------------------------------------------
+# Resources = the things Databricks creates. Here: one Lakeflow Job with a
+# single Python task that calls the inside-Databricks LLM and writes a file
+# into the Unity Catalog volume we created (workspace.genai.deliverables).
+# ---------------------------------------------------------------------------
+resources:
+  jobs:
+    mvp0_weekly_report:
+      name: "[${bundle.target}] GenAI MVP-0 - weekly report"
+
+      tasks:
+        - task_key: convert
+          spark_python_task:
+            python_file: ./src/convert_document.py
+            # Task parameters arrive as argv; this is how the DAB variable
+            # above reaches the running code (see argparse in the script).
+            # The job reads --in-path from the INBOX volume and writes to the
+            # OUTBOX (--out-dir): the "input bucket -> output bucket" model.
+            parameters:
+              - "--model"
+              - "${var.llm_endpoint}"
+              - "--in-path"
+              - "/Volumes/${var.catalog}/${var.schema}/inbox/weekly-update.md"
+              - "--out-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/deliverables"
+          # Free Edition runs on SERVERLESS compute. An "environment" is the
+          # serverless equivalent of a cluster's installed libraries.
+          environment_key: serverless_env
+
+      environments:
+        - environment_key: serverless_env
+          spec:
+            client: "3"          # serverless environment version
+            dependencies:
+              - requests
+            # Enterprise / air-gapped note: in locked-down workspaces there is no
+            # open PyPI. Point dependency resolution at your internal Artifactory/Nexus
+            # by setting PIP_INDEX_URL / PIP_EXTRA_INDEX_URL / PIP_TRUSTED_HOST as
+            # environment variables on the compute (confirm the mechanism with your
+            # platform team; a workspace-level private PyPI mirror is the alternative).
+            # See .env.example for the variable names.
+
+      # Weekly timer (your requirement) - PAUSED so the pilot never fires on
+      # its own. We trigger it by hand until we're happy, then unpause.
+      schedule:
+        quartz_cron_expression: "0 0 13 ? * MON"   # Mondays 13:00
+        timezone_id: UTC
+        pause_status: PAUSED
+
+      max_concurrent_runs: 1
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-6d24dae0-8d3d.cloud.databricks.com
+
+  ## Optionally, there could be 'staging' or 'prod' targets here.
+  #
+  # prod:
+  #   workspace:
+  #     host: https://dbc-6d24dae0-8d3d.cloud.databricks.com

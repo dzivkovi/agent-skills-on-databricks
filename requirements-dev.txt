@@ -1,0 +1,5 @@
+# Local dev / helper-script dependencies (NOT the job's runtime deps).
+# The job's runtime deps are declared in databricks.yml under environments.
+# Install locally with:  pip install -r requirements-dev.txt
+databricks-sdk>=0.30.0
+requests>=2.31.0
