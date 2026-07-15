@@ -42,6 +42,7 @@ src/run_skill.py            # the job task: runs a skill (deterministic metrics 
 samples/weekly-update.md    # a sample INPUT document to analyze
 skills/document-insights/   # the first real skill: SKILL.md + scripts/analyze.py
 scripts/setup_uc.py         # one-command Unity Catalog setup (schema + volumes, idempotent)
+scripts/publish_skill.py    # publish a skill ONCE to a shared UC volume (reuse it unbundled)
 scripts/upload_input.py     # helper: put a local file into the input volume (SDK; Windows-safe)
 scripts/download_outputs.py # helper: list/download the output volume (SDK; Windows-safe)
 scripts/e2e_test.py         # happy-path integration test: put -> run -> wait -> get -> assert
@@ -76,16 +77,19 @@ python scripts/setup_uc.py --profile coldstart
 # 1) sanity-check the bundle
 databricks bundle validate -p coldstart
 
-# 2) create the job in the workspace (uploads src/ + skills/ + samples/)
+# 2) create the job in the workspace (the SKILL is NOT bundled - it comes from a volume, step 3)
 databricks bundle deploy -p coldstart
 
-# 3) put a document in the input (SDK helper avoids Windows path issues)
+# 3) publish the skill ONCE to a shared UC volume; the job consumes it there (reuse, not bundling)
+python scripts/publish_skill.py skills/document-insights --profile coldstart
+
+# 4) put a document in the input (SDK helper avoids Windows path issues)
 python scripts/upload_input.py samples/weekly-update.md --profile coldstart
 
-# 4) run the job on demand (weekly schedule stays PAUSED until you unpause it)
+# 5) run the job on demand (weekly schedule stays PAUSED until you unpause it)
 databricks bundle run mvp0_weekly_report -p coldstart
 
-# 5) get the result out of the output
+# 6) get the result out of the output
 python scripts/download_outputs.py --profile coldstart
 #    -> downloads to ./_output/ ; or view in the UI (see below)
 ```

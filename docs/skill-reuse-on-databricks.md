@@ -57,8 +57,14 @@ skill_md = open("/Volumes/workspace/genai/skills/document-insights/SKILL.md").re
 ```
 
 Volumes are on the job's filesystem, so importing a module from a `/Volumes` path works the same
-way this repo already imports the skill from its deployed path. No build step, single source of
-truth, edit-in-place updates - but no version isolation, so it is best for one team's internal skills.
+way this repo imports the skill. No build step, single source of truth, edit-in-place updates - but
+no version isolation, so it is best for one team's internal skills.
+
+**This repo now uses option B.** [`scripts/publish_skill.py`](../scripts/publish_skill.py) publishes
+the skill to `/Volumes/<catalog>/<schema>/skills/<name>/`, the job's `--skill-dir` points there, and
+`skills/` is excluded from the bundle via `sync.exclude` in `databricks.yml`. Verified: the deployed
+bundle contains no skill copy, yet the job runs - it consumes the skill from the volume. Update flow:
+edit the skill, re-run `publish_skill.py`, and the next job run picks it up with no redeploy.
 
 ### C. Keep bundling - for a single project
 

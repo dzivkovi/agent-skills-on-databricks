@@ -5,6 +5,13 @@
 bundle:
   name: agent-skills-on-databricks
 
+# Keep the skill OUT of the bundle upload - it is consumed from a shared UC volume (see the
+# job's --skill-dir and scripts/publish_skill.py). That is the whole point of decoupling:
+# publish the skill once, reuse it from any job, update it without redeploying consumers.
+sync:
+  exclude:
+    - "skills/"
+
 # ---------------------------------------------------------------------------
 # Variables are the knobs you flip over time. The LLM endpoint is a variable
 # ON PURPOSE: the day you enable billing, change this ONE default to
@@ -48,10 +55,12 @@ resources:
               - "/Volumes/${var.catalog}/${var.schema}/output"
               - "--rejected-dir"
               - "/Volumes/${var.catalog}/${var.schema}/rejected"
-              # ${workspace.file_path} = the deployed bundle files dir. We pass the skill's
-              # absolute path because serverless runs the task via exec() with no __file__.
+              # DECOUPLED: the skill is consumed from a shared UC VOLUME (published once via
+              # scripts/publish_skill.py), NOT bundled with this job. Update the skill in one
+              # place and every consumer picks it up - no per-job redeploy. See
+              # docs/skill-reuse-on-databricks.md.
               - "--skill-dir"
-              - "${workspace.file_path}/skills/document-insights"
+              - "/Volumes/${var.catalog}/${var.schema}/skills/document-insights"
               - "--log-level"
               - "INFO"          # set to DEBUG to see every step in the run logs
           # Free Edition runs on SERVERLESS compute. An "environment" is the
