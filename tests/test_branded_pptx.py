@@ -89,3 +89,23 @@ def test_untitled_when_no_h1(tmp_path):
     MD.build_deck("## Only a section\n\n- x\n", out)
     prs = Presentation(out)
     assert list(prs.slides)[0].shapes.title.text == "Untitled deck"
+
+
+def test_empty_h2_heading_is_kept_as_a_section_not_dropped(tmp_path):
+    # Regression: '## ' (empty title) must still create a section (was silently dropped, and its
+    # bullets leaked to the previous context) and must not crash on the empty title run.
+    out = str(tmp_path / "d.pptx")
+    MD.build_deck("# T\n\n## \n\n- a bullet under the blank heading\n", out)
+    prs = Presentation(out)
+    assert len(prs.slides) == 2                       # title + the (blank-titled) section
+    section = list(prs.slides)[1]
+    assert section.shapes.title.text == "Section"     # empty title defaulted, no crash
+    assert "a bullet under the blank heading" in _all_text(prs)
+
+
+def test_deeper_headings_start_sections_too(tmp_path):
+    out = str(tmp_path / "d.pptx")
+    MD.build_deck("# T\n\n## Two\n\n- a\n\n### Three\n\n- b\n", out)
+    prs = Presentation(out)
+    assert len(prs.slides) == 3                        # title + H2 + H3
+    assert "Three" in _all_text(prs) and "b" in _all_text(prs)

@@ -19,7 +19,6 @@ Usage:
 """
 import argparse
 import re
-import sys
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -49,8 +48,9 @@ def parse_markdown(md: str):
         if stripped.startswith("# ") and not title:
             title = stripped[2:].strip()
             continue
-        if stripped.startswith("## "):
-            current = [stripped[3:].strip(), []]
+        heading = re.match(r"^#{2,}\s*(.*)$", stripped)   # H2 or deeper starts a section
+        if heading:
+            current = [heading.group(1).strip(), []]       # title may be empty; build defaults it
             sections.append(current)
             continue
         # a bullet or a plain line
@@ -72,6 +72,15 @@ def _accent(brand: dict) -> RGBColor:
     return RGBColor.from_string(brand["accent"])
 
 
+def _set_title(shape, text: str, accent: RGBColor):
+    """Set a title placeholder's text and accent-colour it. Guards the empty-title case: an
+    empty string produces no run, so colouring runs[0] would IndexError."""
+    shape.text = text
+    runs = shape.text_frame.paragraphs[0].runs
+    if runs:
+        runs[0].font.color.rgb = accent
+
+
 def build_deck(md: str, out_path: str, brand: str = "default", title_override: str = "") -> str:
     """Build a branded .pptx from markdown text and write it to out_path. Returns out_path."""
     brand_cfg = BRANDS.get(brand, BRANDS["default"])
@@ -86,16 +95,14 @@ def build_deck(md: str, out_path: str, brand: str = "default", title_override: s
 
     # Title slide.
     slide = prs.slides.add_slide(prs.slide_layouts[0])
-    slide.shapes.title.text = title
-    slide.shapes.title.text_frame.paragraphs[0].runs[0].font.color.rgb = accent
+    _set_title(slide.shapes.title, title, accent)
     if subtitle and len(slide.placeholders) > 1:
         slide.placeholders[1].text = subtitle
 
     # One content slide per ## section.
     for section_title, bullets in sections:
         s = prs.slides.add_slide(prs.slide_layouts[1])
-        s.shapes.title.text = section_title
-        s.shapes.title.text_frame.paragraphs[0].runs[0].font.color.rgb = accent
+        _set_title(s.shapes.title, section_title or "Section", accent)
         body = s.placeholders[1].text_frame
         body.clear()
         for i, b in enumerate(bullets):
