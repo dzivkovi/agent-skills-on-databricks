@@ -322,5 +322,7 @@ this README:
   see [docs/agent-invocation-on-databricks.md](docs/agent-invocation-on-databricks.md)
 - **Guardrails and a reject queue** (platform PII/safety guardrails + the dead-letter pattern):
   see [docs/guardrails-and-dead-letter-queue.md](docs/guardrails-and-dead-letter-queue.md)
+- **Reusing a skill across the workspace** (install once via a UC-Volume wheel, not bundled per project):
+  see [docs/skill-reuse-on-databricks.md](docs/skill-reuse-on-databricks.md)
 - **Free Edition limits** (serverless-only, which models work): sourced in
   [docs/free-edition.md](docs/free-edition.md)

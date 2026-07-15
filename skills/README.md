@@ -45,6 +45,8 @@ So:
 
 ## Reuse note
 
-Today the skill is bundled with the DAB and deploys alongside the job. Making a skill
+Today the skill is bundled with the DAB and deploys alongside the job. To make a skill
 **install-once, reuse-everywhere** across a Databricks workspace (like `~/.claude/skills/` in
-Claude Code) is an open design question - see [`../docs/`](../docs/) for the research.
+Claude Code), publish it as a wheel (or a folder) on a shared Unity Catalog volume and depend on it
+instead of bundling a copy per project - see
+[`../docs/skill-reuse-on-databricks.md`](../docs/skill-reuse-on-databricks.md).
