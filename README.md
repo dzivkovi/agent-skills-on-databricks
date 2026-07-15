@@ -23,9 +23,10 @@ small, honest steps (see [The MVP ladder](#the-mvp-ladder)).
                          OUTPUT volume  ------ download -----------------+
 ```
 
-- **Unity Catalog volume** = a governed folder of files. Two of them here:
-  `workspace.genai.input` (drop documents in) and `workspace.genai.output`
-  (pick results up). Paths: `/Volumes/workspace/genai/{input,output}`.
+- **Unity Catalog volume** = a governed folder of files. Three here: `workspace.genai.input`
+  (drop documents in), `workspace.genai.output` (pick results up), and `workspace.genai.rejected`
+  (a dead-letter queue - bad/blocked inputs land here without failing the batch; see
+  [docs/guardrails-and-dead-letter-queue.md](docs/guardrails-and-dead-letter-queue.md)).
 - **Lakeflow Job** = tasks + an optional schedule. Ours has one Python task and a
   weekly timer that ships PAUSED (you trigger it by hand until you trust it).
 - **LLM inside Databricks** = a Foundation Model API endpoint (`databricks-...`).
@@ -313,5 +314,7 @@ this README:
   [Claude Code skills docs](https://code.claude.com/docs/en/skills)
 - **Deploying agents the Databricks way** (Mosaic AI Agent Framework, and why not the Claude Agent SDK):
   see [docs/agent-invocation-on-databricks.md](docs/agent-invocation-on-databricks.md)
+- **Guardrails and a reject queue** (platform PII/safety guardrails + the dead-letter pattern):
+  see [docs/guardrails-and-dead-letter-queue.md](docs/guardrails-and-dead-letter-queue.md)
 - **Free Edition limits** (serverless-only, which models work): sourced in
   [docs/free-edition.md](docs/free-edition.md)

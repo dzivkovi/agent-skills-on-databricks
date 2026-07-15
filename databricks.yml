@@ -46,6 +46,8 @@ resources:
               - "/Volumes/${var.catalog}/${var.schema}/input/weekly-update.md"
               - "--out-dir"
               - "/Volumes/${var.catalog}/${var.schema}/output"
+              - "--rejected-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/rejected"
               # ${workspace.file_path} = the deployed bundle files dir. We pass the skill's
               # absolute path because serverless runs the task via exec() with no __file__.
               - "--skill-dir"
@@ -59,7 +61,7 @@ resources:
       environments:
         - environment_key: serverless_env
           spec:
-            client: "3"          # serverless environment version
+            environment_version: "3"   # serverless env version (was the deprecated `client` field)
             dependencies:
               - requests
             # Enterprise / air-gapped note: in locked-down workspaces there is no

@@ -52,6 +52,7 @@ def main():
     ensure_schema(w, args.catalog, args.schema)
     ensure_volume(w, args.catalog, args.schema, "input", "Input documents dropped by users")
     ensure_volume(w, args.catalog, args.schema, "output", "Generated files for users to download")
+    ensure_volume(w, args.catalog, args.schema, "rejected", "Dead-letter queue: quarantined bad/blocked inputs")
     print("\nUnity Catalog is ready. Next: databricks bundle deploy -p", args.profile)
 
 

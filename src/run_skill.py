@@ -60,6 +60,25 @@ def call_llm(w: WorkspaceClient, model: str, messages: list, max_tokens: int = 8
     return extract_text(resp.json()["choices"][0]["message"])
 
 
+MAX_INPUT_CHARS = 200_000  # oversized inputs go to the dead-letter queue, not the model
+
+
+def write_rejected(rejected_dir: str, in_path: str, source: str, reason: str) -> str:
+    """Dead-letter queue: quarantine a bad input instead of failing the whole job.
+
+    Writes the original text plus a .reason.txt sidecar under the rejected volume, so an
+    operator can inspect what was rejected and why - like a SQL*Loader reject file or an AWS DLQ.
+    Rejecting one bad input never fails the batch; the run still succeeds.
+    """
+    os.makedirs(rejected_dir, exist_ok=True)
+    base = os.path.basename(in_path)
+    with open(f"{rejected_dir}/{base}", "w", encoding="utf-8") as f:
+        f.write(source)
+    with open(f"{rejected_dir}/{base}.reason.txt", "w", encoding="utf-8") as f:
+        f.write(reason + "\n")
+    return f"{rejected_dir}/{base}"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run an Agent Skill against a document.")
     parser.add_argument("--model", default="databricks-gpt-oss-120b")
@@ -68,6 +87,8 @@ def main():
                              "via ${workspace.file_path}; the relative default works for local runs.")
     parser.add_argument("--in-path", default="/Volumes/workspace/genai/input/weekly-update.md")
     parser.add_argument("--out-dir", default="/Volumes/workspace/genai/output")
+    parser.add_argument("--rejected-dir", default="/Volumes/workspace/genai/rejected",
+                        help="Dead-letter queue: bad/blocked inputs are quarantined here (never fail the batch).")
     parser.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))
     args = parser.parse_args()
 
@@ -81,6 +102,20 @@ def main():
 
     with open(args.in_path, "r", encoding="utf-8") as f:
         source = f.read()
+
+    # 0) GUARD: send bad input to the dead-letter queue instead of failing the batch.
+    #    (Guardrail-blocked inputs - PII/unsafe - would be quarantined the same way; see
+    #    docs/guardrails-and-dead-letter-queue.md.)
+    problem = None
+    if not source.strip():
+        problem = "empty input (no content to analyze)"
+    elif len(source) > MAX_INPUT_CHARS:
+        problem = f"input too large ({len(source)} chars > {MAX_INPUT_CHARS} limit)"
+    if problem:
+        dest = write_rejected(args.rejected_dir, args.in_path, source, problem)
+        log.warning("REJECTED %s -> %s (%s)", args.in_path, dest, problem)
+        print(f"REJECTED {args.in_path} -> {dest} ({problem})")
+        return
     log.debug("read %d chars from %s", len(source), args.in_path)
 
     # 1) DETERMINISTIC half - the skill's own code computes exact metrics.
