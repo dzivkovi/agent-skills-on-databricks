@@ -330,3 +330,6 @@ this README:
   see [docs/skill-reuse-on-databricks.md](docs/skill-reuse-on-databricks.md)
 - **Free Edition limits** (serverless-only, which models work): sourced in
   [docs/free-edition.md](docs/free-edition.md)
+- **Knowledge base** (learnings from building this, worth reading before working in a documented area):
+  [docs/solutions/](docs/solutions/) - documented patterns/gotchas with YAML frontmatter (`module`, `tags`,
+  `problem_type`); [CONCEPTS.md](CONCEPTS.md) - shared domain vocabulary
