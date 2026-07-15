@@ -79,6 +79,37 @@ def write_rejected(rejected_dir: str, in_path: str, source: str, reason: str) ->
     return f"{rejected_dir}/{base}"
 
 
+CONTENT_GUARD_PROMPT = (
+    "You are a content guardrail. Inspect the DOCUMENT and respond with ONLY compact JSON: "
+    '{"pii": true|false, "unsafe": true|false, "reason": "<= 12 words"}. '
+    "pii=true if it contains emails, phone numbers, SSNs, credit-card numbers, or similar personal "
+    "identifiers. unsafe=true for hate, violence, self-harm, or clearly malicious intent."
+)
+
+
+def guard_content(w: WorkspaceClient, model: str, text: str):
+    """LLM-as-guardrail. Returns (flagged: bool, reason: str).
+
+    Uses the inside-Databricks model to classify the input for PII / unsafe content. Fails OPEN
+    (proceeds) if the guard's output cannot be parsed, so a guard hiccup never blocks legitimate
+    content. Production may prefer fail-closed, or the platform AI Gateway guardrails (config, not
+    code) - see docs/guardrails-and-dead-letter-queue.md.
+    """
+    raw = call_llm(w, model, [
+        {"role": "system", "content": CONTENT_GUARD_PROMPT},
+        {"role": "user", "content": "DOCUMENT:\n" + text},
+    ], max_tokens=400)
+    try:
+        verdict = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+    except Exception:  # noqa: BLE001 - unparseable guard output -> fail open
+        log.warning("content guard output unparseable, failing open: %r", raw[:120])
+        return False, ""
+    hits = [k for k in ("pii", "unsafe") if verdict.get(k)]
+    if hits:
+        return True, f"content guardrail flagged {', '.join(hits)}: {verdict.get('reason', '')}".strip()
+    return False, ""
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run an Agent Skill against a document.")
     parser.add_argument("--model", default="databricks-gpt-oss-120b")
@@ -118,6 +149,18 @@ def main():
         return
     log.debug("read %d chars from %s", len(source), args.in_path)
 
+    w = WorkspaceClient()
+
+    # 0b) CONTENT GUARD (LLM-as-guardrail): quarantine PII / unsafe content to the DLQ.
+    #     Platform-native alternative: AI Gateway guardrails as config, not code - see
+    #     docs/guardrails-and-dead-letter-queue.md.
+    flagged, guard_reason = guard_content(w, args.model, source)
+    if flagged:
+        dest = write_rejected(args.rejected_dir, args.in_path, source, guard_reason)
+        log.warning("REJECTED %s -> %s (%s)", args.in_path, dest, guard_reason)
+        print(f"REJECTED {args.in_path} -> {dest} ({guard_reason})")
+        return
+
     # 1) DETERMINISTIC half - the skill's own code computes exact metrics.
     analyze = load_skill_analyze(skill_dir)
     metrics = analyze(source)
@@ -137,7 +180,7 @@ def main():
             "exact metrics where natural, but never restate a count as if you computed it."},
     ]
     log.debug("calling model %s", args.model)
-    reading = call_llm(w=WorkspaceClient(), model=args.model, messages=messages)
+    reading = call_llm(w=w, model=args.model, messages=messages)
     log.info("llm reading produced (%d chars)", len(reading))
 
     # 3) Combined, clearly-labeled report.

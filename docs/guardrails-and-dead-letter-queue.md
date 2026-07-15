@@ -74,11 +74,21 @@ do the same with a third Unity Catalog volume.
 - [`src/run_skill.py`](../src/run_skill.py) validates the input first. If it is empty or larger than
   `MAX_INPUT_CHARS`, it writes the original text plus a `<name>.reason.txt` sidecar to the rejected
   volume and returns - **the run still succeeds**. One bad input never fails the batch.
-- A guardrail-blocked input (PII/unsafe) would be quarantined the exact same way once guardrails are
-  wired - the reject queue is the shared destination.
+- A **content guardrail** is wired in: [`src/run_skill.py`](../src/run_skill.py) asks the
+  inside-Databricks model to classify each input for PII / unsafe content (LLM-as-guardrail) and
+  quarantines flagged inputs to the same reject queue. It fails OPEN on an unparseable verdict, so a
+  guard hiccup never blocks legitimate content. (The platform-native alternative is the AI Gateway
+  guardrails config in Part 1; the LLM classifier is the portable, free-tier path.)
 
-Verified behavior (tested): a whitespace-only input -> job `SUCCESS`, file quarantined in
-`rejected/` with reason "empty input (no content to analyze)", and no output produced.
+Verified by [`scripts/reject_test.py`](../scripts/reject_test.py): both a whitespace-only input
+(reason "empty input") AND a document with PII (reason "content guardrail flagged pii: ...") are
+quarantined in `rejected/` with a `.reason.txt`, the job returns `SUCCESS`, and no output is
+produced - while a benign document still passes through (no false reject).
+
+**Testing guardrails safely in a public repo:** the PII case uses obviously-fake,
+reserved-for-testing values (email `@example.com`, SSN `123-45-6789`, the Visa test card
+`4111 1111 1111 1111`, the `555-01xx` fictional phone range). No profanity or unsafe content is ever
+committed - PII detection is the enterprise guardrail, and it tests cleanly and inoffensively.
 
 ```text
   input volume  ->  run_skill.py  --(valid)-->   output volume   (deliverable)

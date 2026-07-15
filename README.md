@@ -44,7 +44,8 @@ skills/document-insights/   # the first real skill: SKILL.md + scripts/analyze.p
 scripts/setup_uc.py         # one-command Unity Catalog setup (schema + volumes, idempotent)
 scripts/upload_input.py     # helper: put a local file into the input volume (SDK; Windows-safe)
 scripts/download_outputs.py # helper: list/download the output volume (SDK; Windows-safe)
-scripts/e2e_test.py         # black-box integration test: put -> run -> wait -> get -> assert
+scripts/e2e_test.py         # happy-path integration test: put -> run -> wait -> get -> assert
+scripts/reject_test.py      # negative test: bad/PII inputs are quarantined to the reject queue
 docs/free-edition.md        # the tested Free Edition constraints that shaped this repo
 requirements-dev.txt        # local dev deps for the helper scripts
 .env.example                # config + enterprise private-registry template (copy to .env)
@@ -105,6 +106,11 @@ python scripts/e2e_test.py --profile coldstart
 It resolves the exact job id from this folder's bundle, so it targets the right job even
 if another bundle deployed a same-named job. Use `--keep` to leave the test files in place
 for inspection.
+
+For the **negative path**, `python scripts/reject_test.py --profile coldstart` proves that bad
+inputs (empty, and a document with fake PII the LLM content guardrail flags) are quarantined to the
+reject queue while the job still returns SUCCESS. See
+[docs/guardrails-and-dead-letter-queue.md](docs/guardrails-and-dead-letter-queue.md).
 
 ## See it in the Databricks UI
 
