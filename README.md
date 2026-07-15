@@ -192,13 +192,16 @@ databricks bundle destroy -p coldstart --auto-approve
 ### Tier 2: remove the data (optional - this IS permanent)
 
 The Unity Catalog schema and volumes are NOT bundle-managed (you made them with
-`setup_uc.py`), so `bundle destroy` leaves them and your files intact. To remove them too,
-delete the volumes first, then the now-empty schema:
+`setup_uc.py`, plus a `skills` volume from `publish_skill.py`), so `bundle destroy` leaves them
+and your files intact. `schemas delete` refuses a non-empty schema, so delete ALL its volumes
+first (input, output, rejected, and skills), then the now-empty schema:
 
 ```bash
-databricks volumes delete workspace.genai.output -p coldstart
-databricks volumes delete workspace.genai.input        -p coldstart
-databricks schemas delete workspace.genai              -p coldstart
+databricks volumes delete workspace.genai.output   -p coldstart
+databricks volumes delete workspace.genai.input    -p coldstart
+databricks volumes delete workspace.genai.rejected -p coldstart
+databricks volumes delete workspace.genai.skills   -p coldstart
+databricks schemas delete workspace.genai          -p coldstart
 ```
 
 ### Local scratch (optional)

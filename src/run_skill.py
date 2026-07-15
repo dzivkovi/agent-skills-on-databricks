@@ -18,12 +18,19 @@ import importlib.util
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import requests
 from databricks.sdk import WorkspaceClient
 
 log = logging.getLogger("run_skill")
+
+# Serving endpoints routinely return 429/5xx while scaling from zero, so a single attempt
+# would fail the whole batch on a cold start. Retry only transient failures; a 4xx is a real
+# client error and must not be retried.
+LLM_MAX_ATTEMPTS = 4                       # 1 try + 3 retries
+LLM_RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 def load_skill_analyze(skill_dir: Path):
@@ -47,17 +54,47 @@ def extract_text(message: dict) -> str:
     return (message.get("reasoning_content") or "").strip() or "(model returned no text)"
 
 
+def _message_text(payload: dict, model: str) -> str:
+    """Pull the assistant text from a serving-endpoint payload, guarding against 200-with-error
+    bodies (content-filter blocks, backend faults) that carry an error or no choices - those
+    would otherwise crash on choices[0] with an opaque KeyError/IndexError."""
+    if isinstance(payload, dict) and payload.get("error_code"):
+        raise RuntimeError(f"{model} returned {payload['error_code']}: {payload.get('message', '')}")
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        raise RuntimeError(f"{model} returned no choices: {json.dumps(payload)[:200]}")
+    return extract_text(choices[0].get("message", {}))
+
+
 def call_llm(w: WorkspaceClient, model: str, messages: list, max_tokens: int = 800) -> str:
+    """POST to an inside-Databricks serving endpoint, with bounded retry on transient errors.
+
+    Retries timeouts, dropped connections, and 429/5xx (endpoint scaling from zero) with
+    exponential backoff; a 4xx re-raises immediately as a real client error.
+    """
     host = w.config.host.rstrip("/")
     headers = {**w.config.authenticate(), "Content-Type": "application/json"}
-    resp = requests.post(
-        f"{host}/serving-endpoints/{model}/invocations",
-        headers=headers,
-        json={"messages": messages, "max_tokens": max_tokens},
-        timeout=180,
-    )
-    resp.raise_for_status()
-    return extract_text(resp.json()["choices"][0]["message"])
+    url = f"{host}/serving-endpoints/{model}/invocations"
+    last_exc = None
+    for attempt in range(1, LLM_MAX_ATTEMPTS + 1):
+        try:
+            resp = requests.post(
+                url, headers=headers,
+                json={"messages": messages, "max_tokens": max_tokens},
+                timeout=180,
+            )
+            if resp.status_code not in LLM_RETRY_STATUS:
+                resp.raise_for_status()          # 2xx returns below; a non-retryable 4xx raises now
+                return _message_text(resp.json(), model)
+            last_exc = requests.HTTPError(f"HTTP {resp.status_code} from {model}")
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_exc = e
+        if attempt < LLM_MAX_ATTEMPTS:
+            backoff = min(8.0, 0.5 * 2 ** (attempt - 1))
+            log.warning("LLM call attempt %d/%d failed (%s); retrying in %.1fs",
+                        attempt, LLM_MAX_ATTEMPTS, last_exc, backoff)
+            time.sleep(backoff)
+    raise last_exc                               # transient errors exhausted all attempts
 
 
 MAX_INPUT_CHARS = 200_000  # oversized inputs go to the dead-letter queue, not the model
@@ -91,18 +128,20 @@ def guard_content(w: WorkspaceClient, model: str, text: str):
     """LLM-as-guardrail. Returns (flagged: bool, reason: str).
 
     Uses the inside-Databricks model to classify the input for PII / unsafe content. Fails OPEN
-    (proceeds) if the guard's output cannot be parsed, so a guard hiccup never blocks legitimate
-    content. Production may prefer fail-closed, or the platform AI Gateway guardrails (config, not
-    code) - see docs/guardrails-and-dead-letter-queue.md.
+    (proceeds) if the guard call fails OR its output cannot be parsed, so a guard hiccup - a
+    network error as much as garbled JSON - never blocks legitimate content. Production may prefer
+    fail-closed, or the platform AI Gateway guardrails (config, not code) - see
+    docs/guardrails-and-dead-letter-queue.md. NOTE: an LLM guardrail on raw input is prompt-
+    injectable; it is a portable demo control, not a hard boundary (see that doc's Known limits).
     """
-    raw = call_llm(w, model, [
-        {"role": "system", "content": CONTENT_GUARD_PROMPT},
-        {"role": "user", "content": "DOCUMENT:\n" + text},
-    ], max_tokens=400)
     try:
+        raw = call_llm(w, model, [
+            {"role": "system", "content": CONTENT_GUARD_PROMPT},
+            {"role": "user", "content": "DOCUMENT:\n" + text},
+        ], max_tokens=400)
         verdict = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
-    except Exception:  # noqa: BLE001 - unparseable guard output -> fail open
-        log.warning("content guard output unparseable, failing open: %r", raw[:120])
+    except Exception as e:  # noqa: BLE001 - guard call failed OR output unparseable -> fail open
+        log.warning("content guard unavailable/unparseable, failing open: %s", e)
         return False, ""
     hits = [k for k in ("pii", "unsafe") if verdict.get(k)]
     if hits:

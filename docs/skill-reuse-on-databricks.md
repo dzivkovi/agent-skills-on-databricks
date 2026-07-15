@@ -71,6 +71,35 @@ edit the skill, re-run `publish_skill.py`, and the next job run picks it up with
 What this repo does now. Correct when the skill lives with exactly one job and you want the whole
 thing to deploy and version together as code.
 
+## Security: the skills volume is a code-execution trust boundary
+
+Read this before anyone asks. Decoupling the skill onto a shared volume is convenient, but it
+moves a trust boundary: the runner imports and **executes** the skill's `scripts/analyze.py`
+from `--skill-dir` (see `load_skill_analyze` in [`src/run_skill.py`](../src/run_skill.py)). Whoever
+can WRITE that volume path can run arbitrary code inside the job's identity - read the workspace,
+reach any endpoint the job can, exfiltrate the input documents. With the bundled option (C) the
+skill is reviewed and shipped as code; with A/B the gate becomes the volume's Unity Catalog ACL.
+
+What that means in practice, and what makes this acceptable internally:
+
+- **Lock the write ACL.** Grant `WRITE VOLUME` on `.../skills` only to the people/service principal
+  that publishes skills; everyone else gets read. The job needs only read. This is the actual
+  control - "who can publish" is "who can run code," so treat it like write access to a deploy
+  pipeline. Consumers being able to read is fine; the danger is an unexpected writer.
+- **Keep publishing a deliberate, owned step.** `publish_skill.py` is the one door onto the volume.
+  Run it from a trusted place (CI or an owner's session), not ad hoc from wherever.
+- **Vet a skill before you publish it** - the same way you would not `pip install` an unreviewed
+  wheel onto prod. Today that is a human code review of `SKILL.md` + `scripts/`; an automated
+  pre-publish scan (static checks, an allowlist of imports, no network/`subprocess`/`eval` in a
+  skill's deterministic half) is the natural next step and is tracked as a backlog item, not built
+  here. That scan is what turns "pluggable" from a worry into a policy.
+- **Prompt injection is a separate, known limitation** of the LLM content guardrail (not the skill
+  loader) - see [`guardrails-and-dead-letter-queue.md`](guardrails-and-dead-letter-queue.md).
+
+For an untrusted, multi-tenant setup, prefer option A (a versioned wheel you build and sign in CI)
+or keep skills bundled (C) so they ride the reviewed deploy path. For a single team's internal
+skills on a locked-down volume, B is a reasonable, governed choice.
+
 ## Recommendation
 
 - One project, one skill: **keep bundling (C)** - do not add machinery you do not need.

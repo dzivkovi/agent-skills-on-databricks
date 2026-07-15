@@ -93,11 +93,12 @@ targets:
   dev:
     mode: development
     default: true
-    workspace:
-      host: https://dbc-6d24dae0-8d3d.cloud.databricks.com
+    # No workspace host is committed here: it comes from your CLI profile
+    # (databricks auth login / -p <profile>), the same profile the scripts use. Deploy with:
+    #   databricks bundle deploy -p coldstart
 
-  ## Optionally, there could be 'staging' or 'prod' targets here.
+  ## Optionally, there could be 'staging' or 'prod' targets here; each takes its host from
+  ## its own profile the same way.
   #
   # prod:
-  #   workspace:
-  #     host: https://dbc-6d24dae0-8d3d.cloud.databricks.com
+  #   mode: production
