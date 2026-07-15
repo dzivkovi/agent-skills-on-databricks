@@ -51,6 +51,8 @@ def test_skill_declared_model_edges():
     assert run_skill._skill_declared_model("---\nname: x still open\n") is None
     # Not front-matter at all.
     assert run_skill._skill_declared_model("# Just a heading\nmodel: nope\n") is None
+    # A UTF-8 BOM before the fence must not hide the front-matter (SKILL.md saved with a BOM).
+    assert run_skill._skill_declared_model("﻿---\nmetadata:\n  model: bom\n---\nbody\n") == "bom"
 
 
 def test_readability_skill_declares_its_model():

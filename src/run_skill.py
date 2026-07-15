@@ -104,6 +104,7 @@ def _skill_declared_model(skill_md_text: str):
     """Optional per-skill model from the SKILL.md front-matter (a `model:` line, top-level or
     under metadata). Dependency-free regex so the runner keeps its tiny import surface - no
     PyYAML on serverless. Scans only the leading `---` front-matter block, never the body."""
+    skill_md_text = skill_md_text.lstrip("﻿")   # tolerate a UTF-8 BOM before the fence
     if not skill_md_text.startswith("---"):
         return None
     end = skill_md_text.find("\n---", 3)
@@ -232,7 +233,8 @@ def main():
     log.debug("read %d chars from %s", len(source), args.in_path)
 
     # Each skill may pick its own model (SKILL.md front-matter); an explicit --model overrides.
-    skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    # utf-8-sig strips a BOM if the file was saved with one (a BOM would hide the --- fence).
+    skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8-sig")
     model, model_src = resolve_model(args.model, skill_md)
     log.info("using model %s (%s)", model, model_src)
 

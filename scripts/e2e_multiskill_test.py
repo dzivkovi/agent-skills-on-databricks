@@ -33,10 +33,14 @@ import time
 
 from databricks.sdk import WorkspaceClient
 
-# (skill folder name, a signature metric only THAT skill emits) - the proof each skill ran.
+# (skill folder name, metric ONLY this skill emits, metric the OTHER skill emits). Asserting the
+# must-have is present AND the other skill's metric is absent proves the output came from THIS
+# skill, not the other - a stronger identity check than a shared metric like "word count" (which
+# BOTH skills emit). document-insights is the only one with "reading time"; readability the only
+# one with a Flesch score.
 SKILLS = [
-    ("document-insights", "word count"),   # document-insights metrics table has "word count"
-    ("readability", "flesch"),             # readability metrics table has flesch reading/kincaid
+    ("document-insights", "reading time", "flesch"),
+    ("readability", "flesch", "reading time"),
 ]
 
 # A document with long, multi-syllable sentences so both skills produce meaningful metrics.
@@ -101,7 +105,7 @@ def main():
         publish_skill = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(publish_skill)
         publish_skill.ensure_skills_volume(w, args.catalog, args.schema)
-        for name, _ in SKILLS:
+        for name, *_ in SKILLS:
             dest = f"{base}/skills/{name}"
             n = publish_skill.upload_skill_folder(w, os.path.join(repo_root, "skills", name), dest)
             step(f"published {name} ({n} files) -> {dest}")
@@ -110,8 +114,12 @@ def main():
     results = []   # (skill, out_path, ok)
     all_ok = True
 
-    for name, signature in SKILLS:
-        stem = f"multiskill-{name}-{token}"          # DISTINCT stem per skill
+    for name, must_have, must_not_have in SKILLS:
+        # DISTINCT stem per skill: keeps this deploy-safe against the currently-deployed runner,
+        # whose output naming may predate skill-namespacing. Same-input namespacing (the collision
+        # fix) is unit-verified via run_skill.output_path(); here we prove INDEPENDENT CONSUME and
+        # SKILL IDENTITY from the output content, not the filename.
+        stem = f"multiskill-{name}-{token}"
         in_path = f"{base}/input/{stem}.md"
         skill_dir = f"{base}/skills/{name}"
         print()
@@ -128,12 +136,14 @@ def main():
         matches = [e.path for e in w.files.list_directory_contents(out_dir)
                    if e.path.rsplit("/", 1)[-1].startswith(stem)]
         out_path = matches[0] if matches else None
-        content = w.files.download(out_path).contents.read().decode("utf-8") if out_path else ""
-        has_sig = signature.lower() in content.lower()
+        content = (w.files.download(out_path).contents.read().decode("utf-8") if out_path else "").lower()
+        has_sig = must_have.lower() in content            # this skill's OWN metric is present
+        not_other = must_not_have.lower() not in content  # the OTHER skill's metric is absent
         refs_input = f"{stem}.md" in content
-        ok = state == "SUCCESS" and out_path is not None and has_sig and refs_input
+        ok = state == "SUCCESS" and out_path is not None and has_sig and not_other and refs_input
         step(f"  success={state=='SUCCESS'}  output={'yes' if out_path else 'MISSING'}  "
-             f"has '{signature}'={has_sig}  refs_input={refs_input}  -> {'PASS' if ok else 'FAIL'}")
+             f"has '{must_have}'={has_sig}  no '{must_not_have}'={not_other}  refs_input={refs_input}"
+             f"  -> {'PASS' if ok else 'FAIL'}")
         results.append((name, out_path, ok))
         all_ok = all_ok and ok
 
