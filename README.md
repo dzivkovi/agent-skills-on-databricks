@@ -119,9 +119,10 @@ https://<your-workspace-host>/explore/data/volumes/<catalog>/<schema>/<volume>
 For this repo's defaults that is `.../explore/data/volumes/workspace/genai/output` (results)
 and `.../input` (drop zone). Swap `<your-workspace-host>` for your own workspace URL.
 
-**Watch the job:** left sidebar -> **Workflows** (Lakeflow Jobs) -> the `... GenAI MVP-0 ...`
+**Watch the job:** left sidebar -> **Workflows** (Lakeflow Jobs) -> the `... document-insights skill`
 job for run history, logs, and the schedule. Everything you see there was created by
-`databricks.yml`, not by hand.
+`databricks.yml`, not by hand. (Its bundle resource key is still `mvp0_weekly_report`, which is
+why `bundle run mvp0_weekly_report` above is correct - the key is legacy, the display name is current.)
 
 ## Swapping the model (free tier vs paid)
 
