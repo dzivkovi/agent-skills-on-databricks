@@ -124,6 +124,26 @@ job for run history, logs, and the schedule. Everything you see there was create
 `databricks.yml`, not by hand. (Its bundle resource key is still `mvp0_weekly_report`, which is
 why `bundle run mvp0_weekly_report` above is correct - the key is legacy, the display name is current.)
 
+## Where the LLM comes from (there is no endpoint to create)
+
+The surprising part if you are used to Model Serving: **you never created the LLM endpoint, and
+you never will.** `databricks-gpt-oss-120b` is a **Foundation Model API** - a catalog of models
+Databricks pre-hosts and manages for you, billed per token, addressable by name. Your workspace
+already has ~18 of them (`databricks-claude-opus-4-8`, `databricks-glm-5-2`,
+`databricks-gemini-3-5-flash`, embedding models, ...), each backed by a read-only model in the
+`system.ai.*` catalog. No cluster, no config, no endpoint slot used.
+
+- **Find it in the UI:** left nav **Serving** -> the endpoints list -> search `databricks-gpt-oss-120b`.
+  It sits among the other `databricks-*` foundation models. These are distinct from a **custom
+  endpoint** you create yourself (like a `my-echo-endpoint`), which is what you normally provision
+  and which counts against the Free Edition limit of one. Foundation Model APIs do not.
+- **How the job calls it:** a POST to `https://<host>/serving-endpoints/databricks-gpt-oss-120b/invocations`
+  with the job's ambient identity (see [`src/run_skill.py`](src/run_skill.py)). Nothing to deploy.
+- **Free-tier caveat:** premium models (`databricks-claude-*`, `databricks-gemini-*`,
+  `databricks-gpt-5-6-*`) return `rate limit of 0` until you enable a paid tier; the open-weights
+  ones (`databricks-gpt-oss-120b`, `databricks-glm-5-2`) work today. See
+  [docs/free-edition.md](docs/free-edition.md).
+
 ## Swapping the model (free tier vs paid)
 
 The model is a bundle **variable** in `databricks.yml`. On Free Edition, premium
