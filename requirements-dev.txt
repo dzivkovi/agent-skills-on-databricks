@@ -3,3 +3,4 @@
 # Install locally with:  pip install -r requirements-dev.txt
 databricks-sdk>=0.30.0
 requests>=2.31.0
+pytest>=8.0.0          # runs tests/ (creds-free skill-contract + multi-skill proofs)

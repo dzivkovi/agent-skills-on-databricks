@@ -30,6 +30,30 @@ def ensure_skills_volume(w, catalog, schema):
             raise
 
 
+def upload_skill_folder(w, skill_dir, dest_root) -> int:
+    """Mirror one skill folder to dest_root on the volume; return the file count uploaded.
+
+    Skips __pycache__/.git and compiled .pyc so caches never reach the shared volume. Each
+    skill goes to its OWN dest_root, so publishing one skill never touches another's files -
+    the isolation the multi-skill pattern (#6) depends on. Testable without a live workspace:
+    pass any object whose files.upload(dest, fh, overwrite) does the write.
+    """
+    count = 0
+    for root, dirs, files in os.walk(skill_dir):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for fname in files:
+            if fname.endswith((".pyc",)):
+                continue
+            local = os.path.join(root, fname)
+            rel = os.path.relpath(local, skill_dir).replace(os.sep, "/")
+            dest = f"{dest_root}/{rel}"
+            with open(local, "rb") as fh:
+                w.files.upload(dest, fh, overwrite=True)
+            print(f"  {rel}")
+            count += 1
+    return count
+
+
 def main():
     ap = argparse.ArgumentParser(description="Publish a skill folder to a shared UC volume.")
     ap.add_argument("skill_dir", help="Local skill folder, e.g. skills/document-insights")
@@ -44,19 +68,7 @@ def main():
     name = os.path.basename(os.path.normpath(args.skill_dir))
     dest_root = f"/Volumes/{args.catalog}/{args.schema}/skills/{name}"
 
-    count = 0
-    for root, dirs, files in os.walk(args.skill_dir):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        for fname in files:
-            if fname.endswith((".pyc",)):
-                continue
-            local = os.path.join(root, fname)
-            rel = os.path.relpath(local, args.skill_dir).replace(os.sep, "/")
-            dest = f"{dest_root}/{rel}"
-            with open(local, "rb") as fh:
-                w.files.upload(dest, fh, overwrite=True)
-            print(f"  {rel}")
-            count += 1
+    count = upload_skill_folder(w, args.skill_dir, dest_root)
 
     print(f"\nPUBLISHED {count} files -> {dest_root}")
     print(f"Consume it from any job with:  --skill-dir {dest_root}")

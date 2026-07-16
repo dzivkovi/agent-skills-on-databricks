@@ -18,6 +18,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -25,6 +26,8 @@ import requests
 from databricks.sdk import WorkspaceClient
 
 log = logging.getLogger("run_skill")
+
+DEFAULT_MODEL = "databricks-gpt-oss-120b"   # free-tier callable; skills may declare their own
 
 # Serving endpoints routinely return 429/5xx while scaling from zero, so a single attempt
 # would fail the whole batch on a cold start. Retry only transient failures; a 4xx is a real
@@ -97,6 +100,42 @@ def call_llm(w: WorkspaceClient, model: str, messages: list, max_tokens: int = 8
     raise last_exc                               # transient errors exhausted all attempts
 
 
+def _skill_declared_model(skill_md_text: str):
+    """Optional per-skill model from the SKILL.md front-matter (a `model:` line, top-level or
+    under metadata). Dependency-free regex so the runner keeps its tiny import surface - no
+    PyYAML on serverless. Scans only the leading `---` front-matter block, never the body."""
+    skill_md_text = skill_md_text.lstrip("﻿")   # tolerate a UTF-8 BOM before the fence
+    if not skill_md_text.startswith("---"):
+        return None
+    end = skill_md_text.find("\n---", 3)
+    front_matter = skill_md_text[3:end] if end != -1 else ""
+    m = re.search(r"(?m)^\s*model:\s*([^\s#]+)", front_matter)
+    return m.group(1).strip().strip("\"'") if m else None
+
+
+def output_path(out_dir: str, in_path: str, skill_name: str, today: str) -> str:
+    """Skill-namespaced report path: <out_dir>/<stem>-<skill>-<date>.md. The skill segment is
+    what stops two skills over the same input on the same day from overwriting each other
+    (document-insights and readability would otherwise both write <stem>-insights-<date>.md)."""
+    stem = os.path.splitext(os.path.basename(in_path))[0]
+    return f"{out_dir}/{stem}-{skill_name}-{today}.md"
+
+
+def resolve_model(cli_model, skill_md_text: str):
+    """Pick the serving endpoint for this run, most explicit wins. Returns (model, source):
+
+    1. an explicit --model on the CLI/job (cli_model is truthy),
+    2. else a `model:` the skill declares in its SKILL.md front-matter (each skill's own choice),
+    3. else the built-in DEFAULT_MODEL.
+    """
+    if cli_model:
+        return cli_model, "explicit --model"
+    declared = _skill_declared_model(skill_md_text)
+    if declared:
+        return declared, "SKILL.md front-matter"
+    return DEFAULT_MODEL, "built-in default"
+
+
 MAX_INPUT_CHARS = 200_000  # oversized inputs go to the dead-letter queue, not the model
 
 
@@ -135,10 +174,13 @@ def guard_content(w: WorkspaceClient, model: str, text: str):
     injectable; it is a portable demo control, not a hard boundary (see that doc's Known limits).
     """
     try:
+        # Reasoning headroom (same reason as the reading call): a reasoning model spends tokens
+        # thinking before its tiny JSON verdict, so too small a budget yields empty output and the
+        # guard fails OPEN - silently disabling PII/unsafe screening. Keep this generous.
         raw = call_llm(w, model, [
             {"role": "system", "content": CONTENT_GUARD_PROMPT},
             {"role": "user", "content": "DOCUMENT:\n" + text},
-        ], max_tokens=400)
+        ], max_tokens=1000)
         verdict = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
     except Exception as e:  # noqa: BLE001 - guard call failed OR output unparseable -> fail open
         log.warning("content guard unavailable/unparseable, failing open: %s", e)
@@ -151,7 +193,9 @@ def guard_content(w: WorkspaceClient, model: str, text: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Run an Agent Skill against a document.")
-    parser.add_argument("--model", default="databricks-gpt-oss-120b")
+    parser.add_argument("--model", default=None,
+                        help="Serving endpoint. If omitted, the skill's own SKILL.md `model:` is "
+                             "used, else the built-in default. An explicit value here always wins.")
     parser.add_argument("--skill-dir", default="skills/document-insights",
                         help="Path to the skill folder. The DAB passes the deployed absolute path "
                              "via ${workspace.file_path}; the relative default works for local runs.")
@@ -188,12 +232,18 @@ def main():
         return
     log.debug("read %d chars from %s", len(source), args.in_path)
 
+    # Each skill may pick its own model (SKILL.md front-matter); an explicit --model overrides.
+    # utf-8-sig strips a BOM if the file was saved with one (a BOM would hide the --- fence).
+    skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8-sig")
+    model, model_src = resolve_model(args.model, skill_md)
+    log.info("using model %s (%s)", model, model_src)
+
     w = WorkspaceClient()
 
     # 0b) CONTENT GUARD (LLM-as-guardrail): quarantine PII / unsafe content to the DLQ.
     #     Platform-native alternative: AI Gateway guardrails as config, not code - see
     #     docs/guardrails-and-dead-letter-queue.md.
-    flagged, guard_reason = guard_content(w, args.model, source)
+    flagged, guard_reason = guard_content(w, model, source)
     if flagged:
         dest = write_rejected(args.rejected_dir, args.in_path, source, guard_reason)
         log.warning("REJECTED %s -> %s (%s)", args.in_path, dest, guard_reason)
@@ -206,7 +256,6 @@ def main():
     log.info("deterministic metrics: %s", json.dumps(metrics))
 
     # 2) NON-DETERMINISTIC half - the LLM interprets, grounded in the exact metrics.
-    skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     messages = [
         {"role": "system", "content":
             "Follow the skill instructions exactly. Output clean markdown, no preamble. Use hyphens, not em-dashes."},
@@ -214,28 +263,33 @@ def main():
             f"SKILL INSTRUCTIONS:\n{skill_md}\n\n"
             f"EXACT METRICS (ground truth - do not recompute):\n{json.dumps(metrics, indent=2)}\n\n"
             f"DOCUMENT:\n{source}\n\n"
-            "Produce ONLY the interpretive read: overall sentiment (positive/neutral/negative) with a short "
-            "justification, a one-sentence summary, and 2-3 key themes as a bulleted list. You may reference the "
-            "exact metrics where natural, but never restate a count as if you computed it."},
+            "Produce the interpretive read described by the skill's Output contract above (its audience/"
+            "sentiment/coaching/themes half), grounded in the exact metrics and the document. Output ONLY the "
+            "body - prose and bullet points, NO markdown headings and NO metrics/scores table (the runner adds "
+            "the heading and the table). Reference the exact metrics where natural, but never restate or "
+            "recompute a number as if you produced it."},
     ]
-    log.debug("calling model %s", args.model)
-    reading = call_llm(w=w, model=args.model, messages=messages)
+    log.debug("calling model %s", model)   # the resolved model, not args.model (None when omitted)
+    # Headroom for reasoning models (e.g. gpt-oss): they spend tokens thinking before the
+    # answer, so too small a budget can return empty content (the extract_text sentinel).
+    reading = call_llm(w=w, model=model, messages=messages, max_tokens=1500)
     log.info("llm reading produced (%d chars)", len(reading))
 
     # 3) Combined, clearly-labeled report.
     today = datetime.date.today().isoformat()
-    stem = os.path.splitext(os.path.basename(args.in_path))[0]
+    skill_name = skill_dir.name
+    title = skill_name.replace("-", " ").replace("_", " ").title()
     metrics_rows = "\n".join(f"| {k.replace('_', ' ')} | {v} |" for k, v in metrics.items())
     report = (
-        f"# Document Insights - {today}\n\n"
-        f"_Source: `{os.path.basename(args.in_path)}` | skill: `document-insights` | "
-        f"model: `{args.model}` (inside Databricks, no external key)._\n\n"
+        f"# {title} - {today}\n\n"
+        f"_Source: `{os.path.basename(args.in_path)}` | skill: `{skill_name}` | "
+        f"model: `{model}` (inside Databricks, no external key)._\n\n"
         f"## Metrics (computed by code - exact)\n\n"
         f"| metric | value |\n| --- | --- |\n{metrics_rows}\n\n"
         f"## Reading (interpreted by the LLM)\n\n{reading}\n"
     )
     os.makedirs(args.out_dir, exist_ok=True)
-    out_path = f"{args.out_dir}/{stem}-insights-{today}.md"
+    out_path = output_path(args.out_dir, args.in_path, skill_name, today)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(report)
     log.info("WROTE %s", out_path)

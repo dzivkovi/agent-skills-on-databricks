@@ -16,6 +16,11 @@ sync:
 # Variables are the knobs you flip over time. The LLM endpoint is a variable
 # ON PURPOSE: the day you enable billing, change this ONE default to
 # databricks-claude-opus-4-8 and redeploy. Nothing else changes.
+#
+# This job-level endpoint is the DEFAULT. It is passed as an explicit --model below, which
+# always wins. A per-skill model (declared as `model:` in a skill's SKILL.md) takes effect
+# whenever --model is omitted - drop the "--model"/"${var.llm_endpoint}" pair below to let
+# each skill self-select its endpoint. See skills/README.md (per-skill model).
 # ---------------------------------------------------------------------------
 variables:
   llm_endpoint:

@@ -60,7 +60,10 @@ def main():
     token = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     in_path = f"/Volumes/{args.catalog}/{args.schema}/input/e2e-{token}.md"
     out_dir = f"/Volumes/{args.catalog}/{args.schema}/output"
-    out_prefix = f"e2e-{token}-insights"
+    # Match on the unique token, not the skill segment: the runner now names output
+    # <stem>-<skill>-<date>.md (skill-namespaced), so this stays green whether the deployed
+    # job runs document-insights (<token>-document-insights-...) or any other skill.
+    out_prefix = f"e2e-{token}-"
     started = time.time()
 
     def step(msg):
