@@ -1,6 +1,10 @@
-"""Contract test over EVERY skill in skills/. Auto-covers new skills as they are added,
-so the multi-skill invariant (each skill is independently runnable by the job) is enforced
-for document-insights, readability, and anything published later.
+"""Contract test over EVERY skill in skills/. Auto-covers new skills as they are added.
+
+Skills come in more than one shape: an "analyze" skill (document-insights, readability) exposes
+scripts/analyze.py:analyze(text)->dict and is run by src/run_skill.py; a "builder" skill
+(branded-pptx) exposes a different entrypoint (scripts/build_pptx.py) and produces an artifact.
+So the UNIVERSAL contract every skill must meet is SKILL.md front-matter + at least one script;
+the analyze()->dict contract is asserted only for skills that actually ship scripts/analyze.py.
 """
 import importlib.util
 from pathlib import Path
@@ -12,6 +16,7 @@ SKILLS = sorted(
     p for p in (ROOT / "skills").iterdir()
     if p.is_dir() and (p / "SKILL.md").exists()
 )
+ANALYZE_SKILLS = [p for p in SKILLS if (p / "scripts" / "analyze.py").exists()]
 
 
 def _load_analyze(skill_dir: Path):
@@ -22,11 +27,6 @@ def _load_analyze(skill_dir: Path):
     return mod.analyze
 
 
-def test_at_least_two_skills_present():
-    # The whole point of #6: prove MULTIPLE independent skills coexist.
-    assert len(SKILLS) >= 2, f"expected 2+ skills, found {[s.name for s in SKILLS]}"
-
-
 def _front_matter(text: str) -> str:
     """The leading ---...--- block only (same boundary logic the runner uses)."""
     if not text.startswith("---"):
@@ -35,30 +35,34 @@ def _front_matter(text: str) -> str:
     return text[3:end] if end != -1 else ""
 
 
+def test_at_least_two_skills_present():
+    # The whole point of #6: prove MULTIPLE independent skills coexist.
+    assert len(SKILLS) >= 2, f"expected 2+ skills, found {[s.name for s in SKILLS]}"
+
+
 @pytest.mark.parametrize("skill_dir", SKILLS, ids=lambda p: p.name)
 def test_skill_has_required_shape(skill_dir):
-    assert (skill_dir / "SKILL.md").is_file()
-    assert (skill_dir / "scripts" / "analyze.py").is_file(), \
-        f"{skill_dir.name} missing scripts/analyze.py"
+    # Universal contract: SKILL.md front-matter with name:/description:, and at least one script.
     text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     assert text.startswith("---"), f"{skill_dir.name} SKILL.md needs YAML front-matter"
-    # name:/description: must be IN the front-matter block, not merely somewhere in the body.
     fm = _front_matter(text)
     assert "name:" in fm and "description:" in fm, \
         f"{skill_dir.name} front-matter missing name:/description:"
+    scripts = list((skill_dir / "scripts").glob("*.py")) if (skill_dir / "scripts").is_dir() else []
+    assert scripts, f"{skill_dir.name} has no scripts/*.py entrypoint"
 
 
-@pytest.mark.parametrize("skill_dir", SKILLS, ids=lambda p: p.name)
-def test_skill_analyze_returns_nonempty_str_keyed_dict(skill_dir):
+@pytest.mark.parametrize("skill_dir", ANALYZE_SKILLS, ids=lambda p: p.name)
+def test_analyze_skill_returns_nonempty_str_keyed_dict(skill_dir):
     analyze = _load_analyze(skill_dir)
     result = analyze("Hello world. This is a test sentence with several plain words.")
     assert isinstance(result, dict) and result, "analyze() must return a non-empty dict"
     assert all(isinstance(k, str) for k in result), "all metric keys must be strings"
 
 
-@pytest.mark.parametrize("skill_dir", SKILLS, ids=lambda p: p.name)
-def test_skill_analyze_handles_empty_input(skill_dir):
-    # A skill's deterministic half must not crash on empty text (the runner guards empty
+@pytest.mark.parametrize("skill_dir", ANALYZE_SKILLS, ids=lambda p: p.name)
+def test_analyze_skill_handles_empty_input(skill_dir):
+    # An analyze skill's deterministic half must not crash on empty text (the runner guards empty
     # inputs, but analyze() is also called standalone).
     result = _load_analyze(skill_dir)("")
     assert isinstance(result, dict)
