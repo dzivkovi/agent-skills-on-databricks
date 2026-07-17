@@ -50,6 +50,8 @@ def test_skill_has_required_shape(skill_dir):
         f"{skill_dir.name} front-matter missing name:/description:"
     scripts = list((skill_dir / "scripts").glob("*.py")) if (skill_dir / "scripts").is_dir() else []
     assert scripts, f"{skill_dir.name} has no scripts/*.py entrypoint"
+    assert (skill_dir / "scripts" / "run.py").is_file(), \
+        f"{skill_dir.name} missing scripts/run.py (the uniform run(ctx) entrypoint)"
 
 
 @pytest.mark.parametrize("skill_dir", ANALYZE_SKILLS, ids=lambda p: p.name)

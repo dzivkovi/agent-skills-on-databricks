@@ -31,10 +31,10 @@ Here the exact half computes readability scores; the LLM half coaches how to imp
 
 ## Output contract
 
-The runner builds a two-section report and owns the headings and the metrics table: a
-**Metrics (computed by code - exact)** section (the exact `analyze.py` numbers as a
-metric-value table) followed by a **Reading (interpreted by the LLM)** section. Your job is
-only the body of that Reading section - no headings, no table. In it:
+The skill's own code (`scripts/run.py`) builds a two-section report and owns the headings
+and the metrics table: a **Metrics (computed by code - exact)** section (the exact
+`analyze.py` numbers as a metric-value table) followed by a **Reading (interpreted by the
+LLM)** section. Your job is only the body of that Reading section - no headings, no table. In it:
 
 - open with the likely audience and what the Flesch Reading Ease band means (90-100 very easy,
   60-70 plain English, 30-50 difficult, 0-30 very difficult), tied to the exact score;
