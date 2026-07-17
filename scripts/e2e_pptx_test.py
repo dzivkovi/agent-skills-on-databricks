@@ -33,7 +33,12 @@ from pptx import Presentation
 # A benign document with the structure the skill maps to slides: H1 -> title slide, each H2 ->
 # a content slide, list items -> bullets. Deliberately free of anything the content guardrail
 # would flag, so this test exercises the builder path and not the reject queue.
-DOC = """# Platform Update {token}
+#
+# Deliberately NO run token in the text: the LLM guard reads the DOCUMENT only, and a numeric
+# token like 20260716-203317 can read as an identifier, quarantining the input so the job
+# returns SUCCESS with no deck - a flaky suite that misdiagnoses as a builder bug. The token
+# lives in the filename (which the guard never sees), and that is what keeps runs distinct.
+DOC = """# Platform Update
 
 Serverless skills now build decks without a design toolchain.
 
@@ -101,7 +106,7 @@ def main():
     step(f"job_id={job_id}  skill={skill_dir}")
 
     # 1) PUT a real markdown document into the input volume.
-    w.files.upload(in_path, io.BytesIO(DOC.format(token=token).encode("utf-8")), overwrite=True)
+    w.files.upload(in_path, io.BytesIO(DOC.encode("utf-8")), overwrite=True)
     step(f"uploaded {in_path}")
 
     # Everything after the upload runs under try/finally so the shared volumes are cleaned up on
@@ -129,7 +134,16 @@ def main():
         matches = [e.path for e in w.files.list_directory_contents(out_dir)
                    if e.path.rsplit("/", 1)[-1].startswith(expected) and e.path.endswith(".pptx")]
         if len(matches) != 1:
-            print(f"\nRESULT: FAIL - expected exactly one '{expected}*.pptx' in the output, got {matches}")
+            # Name the likeliest cause instead of leaving a bare "no deck". The content guard can
+            # quarantine the input and return early, so the job SUCCEEDS with the skill never run -
+            # a real asymmetry that would otherwise read as a builder bug.
+            quarantined = [e.path for e in w.files.list_directory_contents(f"{base}/rejected")
+                           if e.path.rsplit("/", 1)[-1].startswith(stem)]
+            if quarantined:
+                print(f"\nRESULT: FAIL - the content guard quarantined the test input ({quarantined}); "
+                      f"the skill never ran. Make the test document less identifier-like.")
+            else:
+                print(f"\nRESULT: FAIL - expected exactly one '{expected}*.pptx' in the output, got {matches}")
             return 1
         out_path = matches[0]
         data = w.files.download(out_path).contents.read()
@@ -142,7 +156,7 @@ def main():
         checks = {
             "deck reopens with python-pptx": True,          # reaching here means it parsed
             "title slide + one slide per H2 (3 slides)": len(prs.slides) == 3,
-            "title carries the H1": f"Platform Update {token}" in text,
+            "title carries the H1": "Platform Update" in text,
             "H2 sections became slides": "Highlights" in text and "Next" in text,
             "list items became bullets": "publish once to a shared volume" in text,
         }
@@ -165,6 +179,12 @@ def main():
                     w.files.delete(p)
                 except Exception as e:  # noqa: BLE001 - cleanup is best-effort
                     step(f"cleanup warning for {p}: {e}")
+            # Normally absent; present only if the guard quarantined the input. Quiet on purpose.
+            for p in (f"{base}/rejected/{stem}.md", f"{base}/rejected/{stem}.md.reason.txt"):
+                try:
+                    w.files.delete(p)
+                except Exception:  # noqa: BLE001 - expected to be missing on the happy path
+                    pass
             step("cleaned up test files")
 
 
