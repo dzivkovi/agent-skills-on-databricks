@@ -12,6 +12,7 @@ python-pptx must be a runtime dependency of the job (databricks.yml) for this to
 Databricks - wiring tracked in issue #2.
 """
 import importlib.util
+import io
 import re
 from pathlib import Path
 
@@ -46,7 +47,15 @@ def run(ctx: dict) -> str:
     build_deck = _load_build_pptx(skill_dir)
     brand = _skill_declared_brand(ctx["skill_md"])
 
+    # Build in memory, then write the finished bytes in ONE sequential write. A .pptx is a zip,
+    # and zipfile seeks while packing; a Unity Catalog volume does not support random-access
+    # writes, so saving straight to /Volumes/... dies at ZipFile.close() with OSError errno 5
+    # (I/O error) or 95 (operation not supported). Sequential writes are fine - that is why the
+    # markdown reports work. BytesIO gives zipfile the seekable target it needs.
     out = ctx["out_base"] + ".pptx"
-    build_deck(ctx["text"], out, brand=brand)
-    ctx["log"].info("built deck %s (brand=%s)", out, brand)
+    buf = io.BytesIO()
+    build_deck(ctx["text"], buf, brand=brand)
+    with open(out, "wb") as f:
+        f.write(buf.getvalue())
+    ctx["log"].info("built deck %s (brand=%s, %d bytes)", out, brand, buf.getbuffer().nbytes)
     return out

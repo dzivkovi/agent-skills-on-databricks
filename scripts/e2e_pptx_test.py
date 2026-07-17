@@ -1,0 +1,164 @@
+"""
+End-to-end integration test for the branded-pptx skill ON SERVERLESS (issue #2).
+
+The counterpart to e2e_test.py, but for a BUILDER skill: instead of a markdown report, the
+job must produce a real .pptx. This is the test that #2's acceptance turns on - the skill was
+once merged on local-only proof, so "it builds a deck on my laptop" is explicitly not enough:
+
+    put a markdown document into the INPUT volume
+      -> trigger the deployed job with --skill-dir <volume>/skills/branded-pptx
+        -> wait for a terminal state
+          -> download the .pptx from the OUTPUT volume and REOPEN it with python-pptx
+            -> assert real slides, then clean up
+
+Reopening the artifact is the point: a file of the right name proves nothing (a zero-byte or
+corrupt file would pass an existence check). If python-pptx can parse it, PowerPoint can too.
+
+Exit code 0 = PASS, 1 = FAIL. Run after `databricks bundle deploy`:
+
+    python scripts/e2e_pptx_test.py --profile coldstart
+"""
+import argparse
+import datetime
+import io
+import json
+import os
+import subprocess
+import sys
+import time
+
+from databricks.sdk import WorkspaceClient
+from pptx import Presentation
+
+# A benign document with the structure the skill maps to slides: H1 -> title slide, each H2 ->
+# a content slide, list items -> bullets. Deliberately free of anything the content guardrail
+# would flag, so this test exercises the builder path and not the reject queue.
+DOC = """# Platform Update {token}
+
+Serverless skills now build decks without a design toolchain.
+
+## Highlights
+
+- Skills publish once to a shared volume and any job consumes them
+- The runner supplies the plumbing and the skill supplies the behavior
+
+## Next
+
+- Chain a report into a deck in a single job
+"""
+
+
+def resolve_job_id(profile: str, resource_key: str) -> int:
+    out = subprocess.run(
+        ["databricks", "bundle", "summary", "-o", "json", "-p", profile],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    jobs = json.loads(out).get("resources", {}).get("jobs", {})
+    if resource_key not in jobs:
+        raise SystemExit(f"FAIL: job resource '{resource_key}' not found in bundle summary. "
+                         f"Did you run `databricks bundle deploy -p {profile}` from this folder?")
+    return int(jobs[resource_key]["id"])
+
+
+def override(params, flag, value):
+    """Set a flag on the DEPLOYED parameter list, preserving every other deployed param.
+
+    A wholesale python_params replacement would silently drop --rejected-dir and friends; the
+    job's own deployed values are the baseline and we redirect only what this test owns.
+    """
+    p = list(params)
+    if flag in p:
+        p[p.index(flag) + 1] = value
+    else:
+        p += [flag, value]
+    return p
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Black-box e2e test of branded-pptx on serverless.")
+    ap.add_argument("--profile", default=os.environ.get("DATABRICKS_CONFIG_PROFILE", "coldstart"))
+    ap.add_argument("--catalog", default=os.environ.get("DATABRICKS_CATALOG", "workspace"))
+    ap.add_argument("--schema", default=os.environ.get("DATABRICKS_SCHEMA", "genai"))
+    ap.add_argument("--resource-key", default="mvp0_weekly_report")
+    ap.add_argument("--timeout-min", type=int, default=10)
+    ap.add_argument("--keep", action="store_true", help="Do not delete the test files afterward.")
+    args = ap.parse_args()
+
+    w = WorkspaceClient(profile=args.profile)
+    job_id = resolve_job_id(args.profile, args.resource_key)
+
+    base = f"/Volumes/{args.catalog}/{args.schema}"
+    token = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stem = f"pptx-e2e-{token}"
+    in_path = f"{base}/input/{stem}.md"
+    out_dir = f"{base}/output"
+    skill_dir = f"{base}/skills/branded-pptx"
+    started = time.time()
+
+    def step(msg):
+        print(f"[pptx +{time.time()-started:5.1f}s] {msg}")
+
+    step(f"job_id={job_id}  skill={skill_dir}")
+
+    # 1) PUT a real markdown document into the input volume.
+    w.files.upload(in_path, io.BytesIO(DOC.format(token=token).encode("utf-8")), overwrite=True)
+    step(f"uploaded {in_path}")
+
+    # 2) TRIGGER the deployed job pointed at the branded-pptx skill on the volume.
+    deployed = list(w.jobs.get(job_id=job_id).settings.tasks[0].spark_python_task.parameters or [])
+    params = override(deployed, "--skill-dir", skill_dir)
+    params = override(params, "--in-path", in_path)
+    params = override(params, "--out-dir", out_dir)
+    step("triggering job run and waiting for terminal state...")
+    run = w.jobs.run_now(job_id=job_id, python_params=params).result(
+        timeout=datetime.timedelta(minutes=args.timeout_min))
+    state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
+    step(f"run finished: result_state={state}  url={run.run_page_url}")
+    if state != "SUCCESS":
+        print(f"\nRESULT: FAIL - job run did not succeed (state={state})")
+        return 1
+
+    # 3) GET the deck. The skill names it <stem>-branded-pptx-<date>.pptx (skill-namespaced).
+    expected = f"{stem}-branded-pptx"
+    matches = [e.path for e in w.files.list_directory_contents(out_dir)
+               if e.path.rsplit("/", 1)[-1].startswith(expected) and e.path.endswith(".pptx")]
+    if len(matches) != 1:
+        print(f"\nRESULT: FAIL - expected exactly one '{expected}*.pptx' in the output, got {matches}")
+        return 1
+    out_path = matches[0]
+    data = w.files.download(out_path).contents.read()
+    step(f"downloaded {out_path} ({len(data)} bytes)")
+
+    # 4) ASSERT it is a REAL deck by reopening it - the whole point of this test. A name check
+    #    would pass on a truncated file; python-pptx parsing it means PowerPoint can open it.
+    prs = Presentation(io.BytesIO(data))
+    text = "\n".join(sh.text_frame.text for s in prs.slides for sh in s.shapes if sh.has_text_frame)
+    checks = {
+        "deck reopens with python-pptx": True,          # reaching here means it parsed
+        "title slide + one slide per H2 (3 slides)": len(prs.slides) == 3,
+        "title carries the H1": f"Platform Update {token}" in text,
+        "H2 sections became slides": "Highlights" in text and "Next" in text,
+        "list items became bullets": "publish once to a shared volume" in text,
+    }
+    for name, ok in checks.items():
+        print(f"    assert {name}: {'ok' if ok else 'FAILED'}")
+
+    # 5) CLEAN UP (best effort) unless --keep.
+    if not args.keep:
+        for p in (in_path, out_path):
+            try:
+                w.files.delete(p)
+            except Exception as e:  # noqa: BLE001 - cleanup is best-effort
+                step(f"cleanup warning for {p}: {e}")
+        step("cleaned up test files")
+
+    if all(checks.values()):
+        print(f"\nRESULT: PASS - branded-pptx ran on serverless and produced a real deck "
+              f"({time.time()-started:.1f}s)")
+        return 0
+    print("\nRESULT: FAIL - one or more assertions failed")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

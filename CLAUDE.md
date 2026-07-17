@@ -22,6 +22,15 @@ changing a skill, republish it: python scripts/publish_skill.py skills/<name> --
 When a change spans the runner AND skills, republish the skills FIRST (additive - the old
 runner ignores new files), then databricks bundle deploy.
 
+## Unity Catalog volume traps
+
+Volumes support sequential writes, NOT random access. Anything that seeks while writing - a zip
+archive, and therefore any .pptx/.xlsx/.docx - fails at close() with `OSError errno 5` (I/O
+error) or `errno 95` (operation not supported) when written straight to `/Volumes/...`. Build
+such artifacts in memory (BytesIO) or on local disk, then write the finished bytes in one
+sequential write. Plain markdown/text writes are unaffected. Found live in the #2 e2e; the fix
+belongs in the skill's own `scripts/run.py` adapter, never in the portable builder or the runner.
+
 ## Git Bash traps (Windows)
 
 - Volume paths need the scheme prefix: databricks fs ls dbfs:/Volumes/... (a bare /Volumes/...
