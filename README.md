@@ -37,20 +37,26 @@ small, honest steps (see [The MVP ladder](#the-mvp-ladder)).
 ## Repo layout
 
 ```text
-databricks.yml              # THE bundle: variables, the job, the schedule, the target
-src/run_skill.py            # the job task: runs a skill (deterministic metrics + LLM read)
+databricks.yml              # THE bundle: variables, the jobs, the schedule, the target
+src/run_skill.py            # the harness: plumbing (input, guards, reject queue, model, LLM)
+src/adapters.py             # the harness: shapes the output. ALL Databricks-specific code lives here
+skills/<name>/              # skills, EXACTLY as imported from Claude Code. Read-only, never modified
 samples/weekly-update.md    # a sample INPUT document to analyze
-skills/document-insights/   # the first real skill: SKILL.md + scripts/analyze.py
 scripts/setup_uc.py         # one-command Unity Catalog setup (schema + volumes, idempotent)
 scripts/publish_skill.py    # publish a skill ONCE to a shared UC volume (reuse it unbundled)
+scripts/smoke.py            # THE gate: pytest + every e2e_*.py against the DEPLOYED system
 scripts/upload_input.py     # helper: put a local file into the input volume (SDK; Windows-safe)
 scripts/download_outputs.py # helper: list/download the output volume (SDK; Windows-safe)
-scripts/e2e_test.py         # happy-path integration test: put -> run -> wait -> get -> assert
-scripts/e2e_reject_test.py  # negative e2e test: bad/PII inputs quarantined to the reject queue
+scripts/e2e_*.py            # live end-to-end suites; smoke.py auto-discovers them
+docs/migrating-a-skill.md   # START HERE to bring your own skill: the boundary, and the traps
 docs/free-edition.md        # the tested Free Edition constraints that shaped this repo
 requirements-dev.txt        # local dev deps for the helper scripts
 .env.example                # config + enterprise private-registry template (copy to .env)
 ```
+
+**Bringing your own skill?** Read [docs/migrating-a-skill.md](docs/migrating-a-skill.md). The
+short version: you change nothing about your skill - everything Databricks-specific lives in the
+harness.
 
 ## Prerequisites
 
