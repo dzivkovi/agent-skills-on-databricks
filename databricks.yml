@@ -97,6 +97,73 @@ resources:
 
       max_concurrent_runs: 1
 
+    # ---------------------------------------------------------------------
+    # THE CHAIN: markdown in, a branded deck out, as two runs of the SAME
+    # runner with different --skill-dir. Chaining is not a new program - it is
+    # the skill contract applied twice, which is the whole point.
+    #
+    # Handoff is a run-scoped manifest ({{job.run_id}} keeps concurrent runs
+    # apart). Not dbutils.jobs.taskValues (documented notebook-only, so it does
+    # not exist in a spark_python_task), not a recomputed filename (a run over
+    # UTC midnight would look for the wrong date), not glob-newest (brittle).
+    # The manifest carries STATUS, so a quarantined input makes `deck` SKIP and
+    # the job still SUCCEED - the reject queue's promise, held across a chain.
+    # ---------------------------------------------------------------------
+    report_to_deck:
+      name: "[${bundle.target}] chain: document-insights -> branded-pptx"
+
+      # A JOB parameter, not task params: run_now(python_params=...) would push the
+      # same argv into BOTH tasks, and these two tasks need different arguments.
+      parameters:
+        - name: in_path
+          default: /Volumes/${var.catalog}/${var.schema}/input/weekly-update.md
+
+      tasks:
+        - task_key: analyze
+          spark_python_task:
+            python_file: ./src/run_skill.py
+            # No --model on purpose: each skill self-selects via its SKILL.md
+            # front-matter, falling back to the runner default.
+            parameters:
+              - "--skill-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/skills/document-insights"
+              - "--in-path"
+              - "{{job.parameters.in_path}}"
+              - "--out-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/output"
+              - "--rejected-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/rejected"
+              - "--manifest-out"
+              - "/Volumes/${var.catalog}/${var.schema}/output/_runs/{{job.run_id}}/manifest.json"
+          environment_key: serverless_env
+
+        - task_key: deck
+          depends_on:
+            - task_key: analyze
+          spark_python_task:
+            python_file: ./src/run_skill.py
+            # No --in-path: the manifest supplies it, whatever the report was named.
+            parameters:
+              - "--skill-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/skills/branded-pptx"
+              - "--manifest-in"
+              - "/Volumes/${var.catalog}/${var.schema}/output/_runs/{{job.run_id}}/manifest.json"
+              - "--out-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/output"
+              - "--rejected-dir"
+              - "/Volumes/${var.catalog}/${var.schema}/rejected"
+          environment_key: serverless_env
+
+      environments:
+        - environment_key: serverless_env
+          spec:
+            environment_version: "3"
+            dependencies:
+              - requests
+              - python-pptx
+
+      max_concurrent_runs: 1
+
 targets:
   dev:
     mode: development
