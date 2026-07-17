@@ -1,5 +1,19 @@
 # CLAUDE.md - agent working notes for this repo
 
+## The boundary (read this before touching skills/)
+
+An imported skill is READ-ONLY: `skills/<name>/` is byte-identical to what a Claude Code user
+has, and nothing Databricks-specific may be added to it - no wrapper, no import, no
+registration. All platform code lives in the harness (`src/run_skill.py` plumbing,
+`src/adapters.py` shaping, `databricks.yml` config). When Databricks throws an obstacle, the
+harness absorbs it; the skill never learns. This repo is teaching material, and that boundary is
+the lesson - do not erode it for convenience.
+
+Adapter choice is harness config: the job passes `--adapter report|deck`. It is never declared
+in SKILL.md, because which adapter to use is a fact about the platform, not the skill. A skill of
+an existing shape costs nothing to add (publish the folder, point --skill-dir at it); only a new
+output SHAPE needs a new adapter, in src/adapters.py.
+
 ## Definition of done
 
 A feature is done only when the DEPLOYED system passes the full smoke suite, not when unit
@@ -53,7 +67,7 @@ archive, and therefore any .pptx/.xlsx/.docx - fails at close() with `OSError er
 error) or `errno 95` (operation not supported) when written straight to `/Volumes/...`. Build
 such artifacts in memory (BytesIO) or on local disk, then write the finished bytes in one
 sequential write. Plain markdown/text writes are unaffected. Found live in the #2 e2e; the fix
-belongs in the skill's own `scripts/run.py` adapter, never in the portable builder or the runner.
+belongs in the harness adapter (`src/adapters.py`), never in the skill or the runner's plumbing.
 
 ## Git Bash traps (Windows)
 

@@ -12,7 +12,7 @@ metadata:
 
 # Readability
 
-The second skill in this repo, and proof that the runner is skill-agnostic: same two-half
+The second skill in this repo, and proof that one runner serves many skills: same two-half
 shape as document-insights (deterministic facts + LLM judgment), but a DIFFERENT contract.
 Here the exact half computes readability scores; the LLM half coaches how to improve them.
 
@@ -31,8 +31,8 @@ Here the exact half computes readability scores; the LLM half coaches how to imp
 
 ## Output contract
 
-The skill's own code (`scripts/run.py`) builds a two-section report and owns the headings
-and the metrics table: a **Metrics (computed by code - exact)** section (the exact
+The report is built as two sections, whose headings and metrics table are owned by the
+caller: a **Metrics (computed by code - exact)** section (the exact
 `analyze.py` numbers as a metric-value table) followed by a **Reading (interpreted by the
 LLM)** section. Your job is only the body of that Reading section - no headings, no table. In it:
 

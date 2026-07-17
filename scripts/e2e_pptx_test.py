@@ -118,6 +118,10 @@ def main():
         # 2) TRIGGER the deployed job pointed at the branded-pptx skill on the volume.
         deployed = list(w.jobs.get(job_id=job_id).settings.tasks[0].spark_python_task.parameters or [])
         params = override(deployed, "--skill-dir", skill_dir)
+        # The skill and the adapter must agree: this job is deployed for an analyze skill, so
+        # pointing it at a builder skill means picking the builder adapter too. The harness says
+        # so loudly if you forget ("no scripts/analyze.py, which the 'report' adapter needs").
+        params = override(params, "--adapter", "deck")
         params = override(params, "--in-path", in_path)
         params = override(params, "--out-dir", out_dir)
         step("triggering job run and waiting for terminal state...")

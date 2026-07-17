@@ -144,6 +144,10 @@ resources:
             python_file: ./src/run_skill.py
             # No --in-path: the manifest supplies it, whatever the report was named.
             parameters:
+              # The JOB picks the harness adapter, so the skill folder stays exactly as
+              # imported. 'deck' is the builder shape; 'report' is the default.
+              - "--adapter"
+              - "deck"
               - "--skill-dir"
               - "/Volumes/${var.catalog}/${var.schema}/skills/branded-pptx"
               - "--manifest-in"

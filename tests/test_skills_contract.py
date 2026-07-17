@@ -50,8 +50,9 @@ def test_skill_has_required_shape(skill_dir):
         f"{skill_dir.name} front-matter missing name:/description:"
     scripts = list((skill_dir / "scripts").glob("*.py")) if (skill_dir / "scripts").is_dir() else []
     assert scripts, f"{skill_dir.name} has no scripts/*.py entrypoint"
-    assert (skill_dir / "scripts" / "run.py").is_file(), \
-        f"{skill_dir.name} missing scripts/run.py (the uniform run(ctx) entrypoint)"
+    assert not (skill_dir / "scripts" / "run.py").exists(), \
+        f"{skill_dir.name} ships scripts/run.py - an imported skill must stay read-only, harness " \
+        "code belongs in src/adapters.py, not inside the skill"
 
 
 @pytest.mark.parametrize("skill_dir", ANALYZE_SKILLS, ids=lambda p: p.name)

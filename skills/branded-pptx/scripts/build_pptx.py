@@ -85,8 +85,7 @@ def build_deck(md: str, out_path, brand: str = "default", title_override: str = 
     """Build a branded .pptx from markdown text and write it to out_path. Returns out_path.
 
     out_path is a filesystem path OR any binary file-like object (python-pptx accepts both).
-    Callers writing to storage that cannot seek - a Unity Catalog volume, for one - must pass a
-    BytesIO and copy the bytes themselves; see scripts/run.py.
+    A caller whose storage cannot seek should pass a buffer and write the bytes itself.
     """
     brand_cfg = BRANDS.get(brand, BRANDS["default"])
     accent = _accent(brand_cfg)

@@ -7,11 +7,12 @@ with a uniform contract. The runner supplies the PLUMBING - read the input, guar
 (structural + LLM content guard, reject queue), resolve the model, provide a retrying LLM
 client and a collision-proof output name - then dispatches to the skill's own entrypoint:
 
-    skills/<name>/scripts/run.py :: run(ctx) -> output_path
+    src/adapters.py :: ADAPTERS[<name>](ctx) -> output_path
 
-The skill owns its behavior and output shape: document-insights and readability write a
-two-section markdown report (exact metrics + LLM reading); branded-pptx writes a real .pptx.
-The runner never assumes an output shape. Contract details: skills/README.md.
+The skill is READ-ONLY: you bring the same folder Claude Code uses and change nothing about it.
+Everything Databricks-specific is an ADAPTER in the harness (see adapters.py), chosen per task
+with --adapter. That boundary is the whole migration story - if an obstacle shows up, it is the
+harness's problem, never the skill's. Details: skills/README.md.
 
 CHAINING (--manifest-out / --manifest-in). Two runs of this same runner form a pipeline: an
 upstream task writes a run-scoped manifest, a downstream task reads it and works on whatever
@@ -40,6 +41,8 @@ from pathlib import Path
 import requests
 from databricks.sdk import WorkspaceClient
 
+from adapters import ADAPTERS
+
 log = logging.getLogger("run_skill")
 
 DEFAULT_MODEL = "databricks-gpt-oss-120b"   # free-tier callable; skills may declare their own
@@ -51,22 +54,13 @@ LLM_MAX_ATTEMPTS = 4                       # 1 try + 3 retries
 LLM_RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
-def load_skill_run(skill_dir: Path):
-    """Import the skill's run(ctx) entrypoint by file path - the uniform skill contract.
-
-    Every skill ships scripts/run.py exposing run(ctx) -> output_path. The runner supplies
-    the plumbing; the skill owns its behavior and output shape. A published skill without
-    run.py predates the contract and needs a republish, so fail with that instruction.
-    """
-    path = skill_dir / "scripts" / "run.py"
-    if not path.is_file():
-        raise SystemExit(
-            f"skill at {skill_dir} has no scripts/run.py (the uniform run(ctx) entrypoint). "
-            f"Republish it: python scripts/publish_skill.py skills/<name>")
-    spec = importlib.util.spec_from_file_location(f"{skill_dir.name}_run", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.run
+def load_adapter(name: str):
+    """Pick the harness adapter this task runs the skill through. Not skill metadata: which
+    adapter to use is a fact about the platform, so the JOB declares it and the skill folder
+    stays exactly as its author wrote it."""
+    if name not in ADAPTERS:
+        raise SystemExit(f"unknown --adapter {name!r}; available: {', '.join(sorted(ADAPTERS))}")
+    return ADAPTERS[name]
 
 
 def extract_text(message: dict) -> str:
@@ -259,6 +253,10 @@ def main():
     parser.add_argument("--model", default=None,
                         help="Serving endpoint. If omitted, the skill's own SKILL.md `model:` is "
                              "used, else the built-in default. An explicit value here always wins.")
+    parser.add_argument("--adapter", default="report",
+                        help="Harness adapter to run the skill through (see adapters.py). "
+                             "'report' for an analyze.py skill, 'deck' for a builder. The JOB "
+                             "declares this; the skill folder stays exactly as imported.")
     parser.add_argument("--skill-dir", default="skills/document-insights",
                         help="Path to the skill folder. The DAB passes the deployed absolute path "
                              "via ${workspace.file_path}; the relative default works for local runs.")
@@ -338,11 +336,10 @@ def main():
         print(f"REJECTED {args.in_path} -> {dest} ({guard_reason})")
         return
 
-    # 1) DISPATCH to the skill's run(ctx) entrypoint - the uniform skill contract. Everything
-    #    above this line is plumbing the runner owns (input, guards, reject queue, model); the
-    #    skill owns its behavior and output shape. ctx keys are documented in skills/README.md;
-    #    treat them as frozen - published skills on the volume depend on them.
-    run = load_skill_run(skill_dir)
+    # 1) DISPATCH to the harness adapter. Everything above this line is plumbing (input, guards,
+    #    reject queue, model); the adapter shapes the output and knows the platform's quirks. The
+    #    skill itself is read-only - it contributes its scripts/ and its SKILL.md, nothing more.
+    run = load_adapter(args.adapter)
     today = datetime.date.today().isoformat()
     skill_name = skill_dir.name
     os.makedirs(args.out_dir, exist_ok=True)

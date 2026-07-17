@@ -43,26 +43,51 @@ Precedence: explicit `--model` (CLI/job) -> the skill's declared `model:` -> the
 default. So a cheap skill stays on free-tier `gpt-oss` while a paid skill could ask for
 `databricks-claude-opus-4-8`, all by configuration - no code change.
 
+## The boundary: your skill is read-only
+
+**You change nothing about a skill to run it here.** Every folder in `skills/` is byte-identical
+to what sits in `~/.claude/skills/` - `SKILL.md` plus the skill's own `scripts/`. No Databricks
+import, no wrapper, no registration. That is the claim this repo has to keep, so it is worth
+being blunt about where the line falls:
+
+| | Owns | May contain Databricks-specific code? |
+| --- | --- | --- |
+| **The skill** (`skills/<name>/`) | `SKILL.md`, its own `scripts/` | **No. Never.** Read-only. |
+| **The harness** (`src/`, `databricks.yml`) | the runner, the adapters, the job config | Yes - this is what "harness" means |
+
+When Databricks throws an obstacle at you, it belongs in the harness. Every time. The volume
+zip trap in [`../src/adapters.py`](../src/adapters.py) is the worked example: the fix is four
+lines, it lives in an adapter, and `branded-pptx` never learned it existed.
+
 ## How a job runs a skill
 
-[`../src/run_skill.py`](../src/run_skill.py) is the skill runner, and it owns only the
-plumbing common to every skill: reading the input, the structural and content guards (bad
-or blocked input goes to the reject queue instead of failing the batch), resolving the
-model from `SKILL.md`, a retrying inside-Databricks LLM client, and the output naming. It
-never hardcodes a report shape. Instead each skill ships its own `scripts/run.py` exposing
-`run(ctx) -> output_path`, and the skill owns its behavior and output shape from there -
-document-insights and readability write a two-section markdown report (metrics table +
-LLM reading); branded-pptx writes a real `.pptx` with no LLM call at all.
+[`../src/run_skill.py`](../src/run_skill.py) is the runner, and it owns only the plumbing common
+to every skill: reading the input, the structural and content guards (bad or blocked input goes
+to the reject queue instead of failing the batch), resolving the model from `SKILL.md`, a
+retrying inside-Databricks LLM client, and the output naming.
 
-The runner builds and passes a frozen `ctx` dict:
+It never hardcodes a report shape. The shaping lives in an **adapter** in
+[`../src/adapters.py`](../src/adapters.py), and the **job** picks one with `--adapter`:
+
+| adapter | for a skill whose deterministic half is | produces |
+| --- | --- | --- |
+| `report` (default) | `scripts/analyze.py` returning a dict of exact metrics | a labeled markdown report (metrics table + LLM reading) |
+| `deck` | `scripts/build_pptx.py` | a real `.pptx`, no LLM call |
+
+Adapter choice is a fact about the platform, not about the skill, which is why the job declares
+it and `SKILL.md` does not. Adding a skill of an existing shape costs **nothing**: publish the
+folder, point `--skill-dir` at it. Only a genuinely new output shape needs a new adapter, and it
+goes in the harness with the others.
+
+Each adapter receives a frozen `ctx` dict:
 
 | key | what it is |
 | --- | --- |
 | `text` | the full input document text (guards already passed) |
 | `in_path` | source file path (use only the basename for provenance lines) |
 | `out_dir` | destination directory, already created |
-| `out_base` | `<out_dir>/<stem>-<skill>-<date>` with no extension - append `.md` or `.pptx` |
-| `skill_dir` | path to the skill folder on this filesystem |
+| `out_base` | `<out_dir>/<stem>-<skill>-<date>` with no extension - the adapter appends `.md` or `.pptx` |
+| `skill_dir` | path to the skill folder on this filesystem (the adapter loads the skill's scripts from here, by path) |
 | `skill_md` | full `SKILL.md` text |
 | `skill_name` | skill folder basename, e.g. `document-insights` |
 | `model` | resolved serving endpoint name |
