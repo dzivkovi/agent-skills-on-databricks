@@ -5,6 +5,7 @@ Creds-free: the shared UC volume is simulated by a fake WorkspaceClient whose fi
 writes to a temp dir, so this proves the publish + selection mechanics without a live workspace.
 The live counterpart runs in scripts/e2e_test.py against the deployed job.
 """
+import importlib.util
 from pathlib import Path
 
 import publish_skill
@@ -16,8 +17,16 @@ SAMPLE = ("The team shipped the release this week. Morale is high and we unblock
 
 
 def _analyze_for(name):
-    """Exactly how the job selects a skill: load_skill_analyze(--skill-dir)."""
-    return run_skill.load_skill_analyze(ROOT / "skills" / name)
+    """Selection now goes through load_skill_run(--skill-dir) (issue #16) - the job no longer
+    calls a skill's analyze() directly. This test's intent is only to prove each skill's
+    deterministic half still exposes a distinct contract, so load scripts/analyze.py directly by
+    file path (the run()-level contract, including LLM selection, is covered by
+    test_skill_run_contract.py)."""
+    path = ROOT / "skills" / name / "scripts" / "analyze.py"
+    spec = importlib.util.spec_from_file_location(f"{name}_analyze", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.analyze
 
 
 def test_each_skill_can_pick_its_own_model():
@@ -29,13 +38,15 @@ def test_each_skill_can_pick_its_own_model():
     assert run_skill.resolve_model(None, fm_none) == (run_skill.DEFAULT_MODEL, "built-in default")
 
 
-def test_output_path_is_skill_namespaced_so_two_skills_do_not_collide():
-    # The collision fix: same input + same day, two skills -> two DISTINCT output paths.
-    di = run_skill.output_path("/out", "/in/weekly-update.md", "document-insights", "2026-07-15")
-    rb = run_skill.output_path("/out", "/in/weekly-update.md", "readability", "2026-07-15")
+def test_output_base_is_skill_namespaced_so_two_skills_do_not_collide():
+    # The collision fix: same input + same day, two skills -> two DISTINCT output bases.
+    # output_base has NO extension (issue #16) - the extension now belongs to the skill itself
+    # (document-insights/readability write ".md", branded-pptx writes ".pptx").
+    di = run_skill.output_base("/out", "/in/weekly-update.md", "document-insights", "2026-07-15")
+    rb = run_skill.output_base("/out", "/in/weekly-update.md", "readability", "2026-07-15")
     assert di != rb
-    assert di == "/out/weekly-update-document-insights-2026-07-15.md"
-    assert "readability" in rb and rb.endswith("-2026-07-15.md")
+    assert di == "/out/weekly-update-document-insights-2026-07-15"
+    assert "readability" in rb and rb.endswith("-2026-07-15")
 
 
 def test_skill_declared_model_edges():
@@ -66,7 +77,8 @@ def test_readability_skill_declares_its_model():
 def test_job_selects_skill_by_dir_and_gets_distinct_behavior():
     di = _analyze_for("document-insights")(SAMPLE)
     rb = _analyze_for("readability")(SAMPLE)
-    # Selecting a different --skill-dir yields a different deterministic contract.
+    # A different --skill-dir still yields a different deterministic contract - the selection
+    # mechanism moved to load_skill_run(), but the two skills' analyze() halves still differ.
     assert di != rb
     assert set(di) != set(rb), "the two skills must expose distinct metric contracts"
     assert "word_count" in di, "document-insights should expose word_count"

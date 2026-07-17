@@ -2,12 +2,16 @@
 Job task: RUN an Agent Skill against a document from the INPUT volume and write the
 result to the OUTPUT volume.
 
-Unlike MVP-0 (which just called the LLM with a fixed prompt), this loads a real skill
-folder and runs both of its halves:
-  1. DETERMINISTIC: runs the skill's own scripts/analyze.py -> exact metrics (ground truth).
-  2. NON-DETERMINISTIC: calls the inside-Databricks LLM for sentiment / summary / themes,
-     grounded in those exact metrics and the document text.
-  3. Writes a combined report that LABELS which half is code and which is the LLM.
+Unlike MVP-0 (which just called the LLM with a fixed prompt), this is a generic skill runner
+with a uniform contract. The runner supplies the PLUMBING - read the input, guard it
+(structural + LLM content guard, reject queue), resolve the model, provide a retrying LLM
+client and a collision-proof output name - then dispatches to the skill's own entrypoint:
+
+    skills/<name>/scripts/run.py :: run(ctx) -> output_path
+
+The skill owns its behavior and output shape: document-insights and readability write a
+two-section markdown report (exact metrics + LLM reading); branded-pptx writes a real .pptx.
+The runner never assumes an output shape. Contract details: skills/README.md.
 
 Watch both halves: set LOG_LEVEL=DEBUG (env) or pass --log-level DEBUG.
 Auth is ambient (WorkspaceClient); no secrets in this file.
@@ -36,13 +40,22 @@ LLM_MAX_ATTEMPTS = 4                       # 1 try + 3 retries
 LLM_RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
-def load_skill_analyze(skill_dir: Path):
-    """Import the skill's deterministic analyze() function by file path."""
-    path = skill_dir / "scripts" / "analyze.py"
-    spec = importlib.util.spec_from_file_location("skill_analyze", path)
+def load_skill_run(skill_dir: Path):
+    """Import the skill's run(ctx) entrypoint by file path - the uniform skill contract.
+
+    Every skill ships scripts/run.py exposing run(ctx) -> output_path. The runner supplies
+    the plumbing; the skill owns its behavior and output shape. A published skill without
+    run.py predates the contract and needs a republish, so fail with that instruction.
+    """
+    path = skill_dir / "scripts" / "run.py"
+    if not path.is_file():
+        raise SystemExit(
+            f"skill at {skill_dir} has no scripts/run.py (the uniform run(ctx) entrypoint). "
+            f"Republish it: python scripts/publish_skill.py skills/<name>")
+    spec = importlib.util.spec_from_file_location(f"{skill_dir.name}_run", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.analyze
+    return module.run
 
 
 def extract_text(message: dict) -> str:
@@ -113,12 +126,12 @@ def _skill_declared_model(skill_md_text: str):
     return m.group(1).strip().strip("\"'") if m else None
 
 
-def output_path(out_dir: str, in_path: str, skill_name: str, today: str) -> str:
-    """Skill-namespaced report path: <out_dir>/<stem>-<skill>-<date>.md. The skill segment is
-    what stops two skills over the same input on the same day from overwriting each other
-    (document-insights and readability would otherwise both write <stem>-insights-<date>.md)."""
+def output_base(out_dir: str, in_path: str, skill_name: str, today: str) -> str:
+    """Skill-namespaced output base: <out_dir>/<stem>-<skill>-<date>, with NO extension - the
+    skill appends its own (.md for a report, .pptx for a deck). The skill segment is what
+    stops two skills over the same input on the same day from overwriting each other."""
     stem = os.path.splitext(os.path.basename(in_path))[0]
-    return f"{out_dir}/{stem}-{skill_name}-{today}.md"
+    return f"{out_dir}/{stem}-{skill_name}-{today}"
 
 
 def resolve_model(cli_model, skill_md_text: str):
@@ -250,48 +263,30 @@ def main():
         print(f"REJECTED {args.in_path} -> {dest} ({guard_reason})")
         return
 
-    # 1) DETERMINISTIC half - the skill's own code computes exact metrics.
-    analyze = load_skill_analyze(skill_dir)
-    metrics = analyze(source)
-    log.info("deterministic metrics: %s", json.dumps(metrics))
-
-    # 2) NON-DETERMINISTIC half - the LLM interprets, grounded in the exact metrics.
-    messages = [
-        {"role": "system", "content":
-            "Follow the skill instructions exactly. Output clean markdown, no preamble. Use hyphens, not em-dashes."},
-        {"role": "user", "content":
-            f"SKILL INSTRUCTIONS:\n{skill_md}\n\n"
-            f"EXACT METRICS (ground truth - do not recompute):\n{json.dumps(metrics, indent=2)}\n\n"
-            f"DOCUMENT:\n{source}\n\n"
-            "Produce the interpretive read described by the skill's Output contract above (its audience/"
-            "sentiment/coaching/themes half), grounded in the exact metrics and the document. Output ONLY the "
-            "body - prose and bullet points, NO markdown headings and NO metrics/scores table (the runner adds "
-            "the heading and the table). Reference the exact metrics where natural, but never restate or "
-            "recompute a number as if you produced it."},
-    ]
-    log.debug("calling model %s", model)   # the resolved model, not args.model (None when omitted)
-    # Headroom for reasoning models (e.g. gpt-oss): they spend tokens thinking before the
-    # answer, so too small a budget can return empty content (the extract_text sentinel).
-    reading = call_llm(w=w, model=model, messages=messages, max_tokens=1500)
-    log.info("llm reading produced (%d chars)", len(reading))
-
-    # 3) Combined, clearly-labeled report.
+    # 1) DISPATCH to the skill's run(ctx) entrypoint - the uniform skill contract. Everything
+    #    above this line is plumbing the runner owns (input, guards, reject queue, model); the
+    #    skill owns its behavior and output shape. ctx keys are documented in skills/README.md;
+    #    treat them as frozen - published skills on the volume depend on them.
+    run = load_skill_run(skill_dir)
     today = datetime.date.today().isoformat()
     skill_name = skill_dir.name
-    title = skill_name.replace("-", " ").replace("_", " ").title()
-    metrics_rows = "\n".join(f"| {k.replace('_', ' ')} | {v} |" for k, v in metrics.items())
-    report = (
-        f"# {title} - {today}\n\n"
-        f"_Source: `{os.path.basename(args.in_path)}` | skill: `{skill_name}` | "
-        f"model: `{model}` (inside Databricks, no external key)._\n\n"
-        f"## Metrics (computed by code - exact)\n\n"
-        f"| metric | value |\n| --- | --- |\n{metrics_rows}\n\n"
-        f"## Reading (interpreted by the LLM)\n\n{reading}\n"
-    )
     os.makedirs(args.out_dir, exist_ok=True)
-    out_path = output_path(args.out_dir, args.in_path, skill_name, today)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(report)
+    ctx = {
+        "text": source,
+        "in_path": args.in_path,
+        "out_dir": args.out_dir,
+        "out_base": output_base(args.out_dir, args.in_path, skill_name, today),
+        "skill_dir": str(skill_dir),
+        "skill_md": skill_md,
+        "skill_name": skill_name,
+        "model": model,
+        # Retrying inside-Databricks chat client, pre-bound to the resolved model. Generous
+        # default token budget: reasoning models (e.g. gpt-oss) think before answering.
+        "llm": lambda messages, max_tokens=1500: call_llm(w, model, messages, max_tokens),
+        "log": log,
+        "today": today,
+    }
+    out_path = run(ctx)
     log.info("WROTE %s", out_path)
     print(f"READ  {args.in_path}")
     print(f"WROTE {out_path}")

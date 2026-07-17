@@ -45,29 +45,50 @@ default. So a cheap skill stays on free-tier `gpt-oss` while a paid skill could 
 
 ## How a job runs a skill
 
-[`../src/run_skill.py`](../src/run_skill.py) is the skill runner. Given `--skill-dir`, it:
+[`../src/run_skill.py`](../src/run_skill.py) is the skill runner, and it owns only the
+plumbing common to every skill: reading the input, the structural and content guards (bad
+or blocked input goes to the reject queue instead of failing the batch), resolving the
+model from `SKILL.md`, a retrying inside-Databricks LLM client, and the output naming. It
+never hardcodes a report shape. Instead each skill ships its own `scripts/run.py` exposing
+`run(ctx) -> output_path`, and the skill owns its behavior and output shape from there -
+document-insights and readability write a two-section markdown report (metrics table +
+LLM reading); branded-pptx writes a real `.pptx` with no LLM call at all.
 
-1. imports and runs the skill's `scripts/analyze.py` for exact metrics,
-2. reads `SKILL.md` and calls the inside-Databricks LLM for the interpretive read,
-3. writes a combined, labeled report to the output volume.
+The runner builds and passes a frozen `ctx` dict:
 
-The DAB passes the deployed skill path via `--skill-dir ${workspace.file_path}/skills/document-insights`
+| key | what it is |
+| --- | --- |
+| `text` | the full input document text (guards already passed) |
+| `in_path` | source file path (use only the basename for provenance lines) |
+| `out_dir` | destination directory, already created |
+| `out_base` | `<out_dir>/<stem>-<skill>-<date>` with no extension - append `.md` or `.pptx` |
+| `skill_dir` | path to the skill folder on this filesystem |
+| `skill_md` | full `SKILL.md` text |
+| `skill_name` | skill folder basename, e.g. `document-insights` |
+| `model` | resolved serving endpoint name |
+| `llm` | retrying `callable(messages, max_tokens=1500) -> str` |
+| `log` | a `logging.Logger` |
+| `today` | ISO date already baked into `out_base` |
+
+The DAB passes the skill's published volume path via `--skill-dir /Volumes/<catalog>/<schema>/skills/<name>`
 (serverless runs the task with no `__file__`, so the path is passed in explicitly).
 
-## Coming next: branded-pptx (MVP-2 / MVP-3)
+## branded-pptx (MVP-2 shipped; MVP-3 later)
 
-branded-pptx turns a markdown document into a branded PowerPoint deck. Its real engine is
+branded-pptx turns a markdown document into a branded PowerPoint deck. Its faithful engine is
 `pptxgenjs` (Node.js) + LibreOffice + Poppler with a multimodal vision-in-the-loop QA cycle -
 **none of which run on Databricks Free Edition** (serverless-only: no Node, no system packages).
-So:
+So the ladder:
 
-- **MVP-2** re-cuts it in pure-Python `python-pptx` (runs on free serverless; lower fidelity, no vision loop).
+- **MVP-2** ([`branded-pptx/`](branded-pptx/), in this repo) re-cuts it in pure-Python `python-pptx`:
+  lower fidelity, no vision loop, deterministic and testable. Wiring it into the serverless job
+  (python-pptx as a runtime dependency + a live e2e run) is tracked in issue #2.
 - **MVP-3** runs it faithfully on a paid tier with classic compute (the self-correcting vision loop).
 
 ## Reuse note
 
-Today the skill is bundled with the DAB and deploys alongside the job. To make a skill
-**install-once, reuse-everywhere** across a Databricks workspace (like `~/.claude/skills/` in
-Claude Code), publish it as a wheel (or a folder) on a shared Unity Catalog volume and depend on it
-instead of bundling a copy per project - see
+Skills are NOT bundled with the DAB: `databricks.yml` excludes `skills/`, and each skill is
+published ONCE to a shared Unity Catalog volume (`python scripts/publish_skill.py skills/<name>`),
+then consumed by any job via `--skill-dir` - install-once, reuse-everywhere, like
+`~/.claude/skills/` in Claude Code. Mechanics and options (folder vs wheel): see
 [`../docs/skill-reuse-on-databricks.md`](../docs/skill-reuse-on-databricks.md).
