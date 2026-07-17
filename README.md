@@ -45,6 +45,7 @@ samples/weekly-update.md    # a sample INPUT document to analyze
 scripts/setup_uc.py         # one-command Unity Catalog setup (schema + volumes, idempotent)
 scripts/publish_skill.py    # publish a skill ONCE to a shared UC volume (reuse it unbundled)
 scripts/smoke.py            # THE gate: pytest + every e2e_*.py against the DEPLOYED system
+scripts/prune_outputs.py    # housekeeping: delete output artifacts older than N days (dry-run default)
 scripts/upload_input.py     # helper: put a local file into the input volume (SDK; Windows-safe)
 scripts/download_outputs.py # helper: list/download the output volume (SDK; Windows-safe)
 scripts/e2e_*.py            # live end-to-end suites; smoke.py auto-discovers them
@@ -209,6 +210,21 @@ databricks volumes delete workspace.genai.rejected -p coldstart
 databricks volumes delete workspace.genai.skills   -p coldstart
 databricks schemas delete workspace.genai          -p coldstart
 ```
+
+### Housekeeping: prune old run artifacts (keep the volumes tidy)
+
+Runs pile up files in the output volume over time. `scripts/prune_outputs.py` is a standalone
+janitor, in the spirit of `docker image prune --filter until=`: age-based, and **dry-run by
+default** so you always see what would go first. The newest files always survive.
+
+```bash
+python scripts/prune_outputs.py --profile coldstart                       # show what is >7d old
+python scripts/prune_outputs.py --profile coldstart --older-than 3 --yes   # actually delete
+python scripts/prune_outputs.py --profile coldstart --include-rejected --yes  # also clear the queue
+```
+
+It leaves the input volume alone, and by default leaves the `rejected` queue alone (it is an
+audit trail). It is not part of the test gate - `smoke.py` discovers `e2e_*.py`, not `prune_*.py`.
 
 ### Local scratch (optional)
 
