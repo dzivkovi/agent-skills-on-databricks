@@ -97,6 +97,7 @@ def case_happy(w, job_id, base, timeout_min, keep, started):
     w.files.upload(in_path, io.BytesIO(HAPPY_DOC.encode("utf-8")), overwrite=True)
 
     report_path = None
+    report_stem = None
     deck_path = None
     manifest_path = None
     try:
@@ -114,7 +115,8 @@ def case_happy(w, job_id, base, timeout_min, keep, started):
                    if e.path.rsplit("/", 1)[-1].startswith(f"{stem}-document-insights")
                    and e.path.endswith(".md")]
         report_path = reports[0] if len(reports) == 1 else None
-        report_stem = os.path.basename(report_path)[:-len(".md")] if report_path else None
+        if report_path:
+            report_stem = os.path.basename(report_path)[:-len(".md")]
 
         # The deck task's output - namespaced off the REPORT's own name (its in_path came from
         # the manifest, not from --in-path), per the runner's output_base contract.
@@ -124,6 +126,16 @@ def case_happy(w, job_id, base, timeout_min, keep, started):
                      if e.path.rsplit("/", 1)[-1].startswith(f"{report_stem}-branded-pptx")
                      and e.path.endswith(".pptx")]
         deck_path = decks[0] if len(decks) == 1 else None
+
+        # Name the cause when the report exists but no deck does: the deck task re-guards its
+        # input, so it can quarantine the REPORT. Without this the failure reads as a builder
+        # bug, which is the misdiagnosis the sibling pptx suite already guards against.
+        if report_stem and not deck_path:
+            quarantined = [e.path for e in w.files.list_directory_contents(f"{base}/rejected")
+                           if e.path.rsplit("/", 1)[-1].startswith(report_stem)]
+            if quarantined:
+                step(f"  NOTE: the deck task's content guard quarantined the REPORT "
+                     f"({quarantined}); the skill never ran.")
 
         prs_ok = False
         slide_count = 0
@@ -151,9 +163,14 @@ def case_happy(w, job_id, base, timeout_min, keep, started):
         if not keep:
             for p in (in_path, report_path, deck_path, manifest_path):
                 _rm(w, p)
-            # Normally absent on the happy path; present only if something misfired.
-            _rm(w, f"{base}/rejected/{stem}.md")
-            _rm(w, f"{base}/rejected/{stem}.md.reason.txt")
+            # Normally absent on the happy path; present only if a guard misfired. Two possible
+            # names: the input (quarantined by analyze) or the REPORT (quarantined by deck, which
+            # re-guards its own input) - write_rejected names the file after whatever it rejected.
+            for name in (stem, report_stem):
+                if not name:
+                    continue
+                _rm(w, f"{base}/rejected/{name}.md")
+                _rm(w, f"{base}/rejected/{name}.md.reason.txt")
             step("  cleaned up 'happy' test files")
 
 

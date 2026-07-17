@@ -61,3 +61,33 @@ def test_read_manifest_malformed_json_raises_json_decode_error(tmp_path):
     manifest_path.write_text("{not valid json", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         run_skill.read_manifest(str(manifest_path))
+
+
+# --- What the DOWNSTREAM task decides from a manifest -----------------------------------------
+# Only two statuses are legal. Anything else must fail loudly: a broken upstream that silently
+# became a clean skip would produce a no-output run that still reports SUCCESS - the exact
+# failure the manifest exists to prevent.
+
+def test_ok_manifest_yields_the_upstream_report_path():
+    upstream = {"status": "ok", "report_path": "/Volumes/workspace/genai/output/x.md",
+                "skill": "document-insights", "model": "m"}
+    assert run_skill.chained_input(upstream, "/m.json") == "/Volumes/workspace/genai/output/x.md"
+
+
+def test_rejected_manifest_yields_none_so_the_downstream_skips():
+    # The reject-queue promise, held across a chain: no report to work on, so skip and succeed.
+    upstream = {"status": "rejected", "reason": "content guardrail flagged pii: fake SSN"}
+    assert run_skill.chained_input(upstream, "/m.json") is None
+
+
+@pytest.mark.parametrize("upstream", [
+    {"status": "okay"},                                    # a typo must never read as success
+    {"status": "OK"},                                       # nor a case variant
+    {"reason": "no status at all"},                         # a malformed writer
+    {"status": "ok"},                                       # ok without the path it promises
+    {"status": "ok", "report_path": ""},                    # ok with an empty path
+    {},                                                     # empty manifest
+], ids=["typo", "case-variant", "no-status", "ok-without-path", "ok-empty-path", "empty"])
+def test_unusable_manifest_raises_instead_of_silently_skipping(upstream):
+    with pytest.raises(SystemExit):
+        run_skill.chained_input(upstream, "/m.json")

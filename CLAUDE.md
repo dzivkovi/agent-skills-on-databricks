@@ -38,6 +38,14 @@ A multi-task job must be triggered with JOB parameters (`run_now(job_parameters=
 `python_params` - the latter pushes identical argv into every task, and chained tasks by
 definition need different arguments.
 
+Only `ok` (which must carry a `report_path`) and `rejected` are legal statuses; a downstream task
+raises on anything else rather than skipping, because a malformed manifest that read as a clean
+skip would be a silent no-output success. Note the downstream task re-guards its input, which for
+a chain is the upstream's generated report (not the original document - the report carries metrics
+plus an LLM reading, never the raw source). Guarding a derived artifact again is accepted on
+purpose: it is the artifact a human opens, and a rejection there behaves like any other - the
+report is quarantined with a reason and the batch still succeeds.
+
 ## Unity Catalog volume traps
 
 Volumes support sequential writes, NOT random access. Anything that seeks while writing - a zip

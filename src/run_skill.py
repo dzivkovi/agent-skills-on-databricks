@@ -201,6 +201,23 @@ def read_manifest(manifest_path: str) -> dict:
         return json.load(f)
 
 
+def chained_input(upstream: dict, manifest_path: str):
+    """What a downstream task should work on: the upstream's output path, or None to SKIP.
+
+    Only two statuses are legal. "rejected" is a skip (the upstream quarantined its input and
+    produced nothing - the batch must still succeed). "ok" must carry a report_path. ANYTHING
+    else raises, deliberately: treating an unknown or malformed status as a clean skip would
+    turn a broken upstream into a silent no-output success, which is the exact failure this
+    manifest exists to prevent.
+    """
+    status = upstream.get("status")
+    if status == "rejected":
+        return None
+    if status == "ok" and upstream.get("report_path"):
+        return upstream["report_path"]
+    raise SystemExit(f"unusable manifest at {manifest_path}: {upstream!r}")
+
+
 CONTENT_GUARD_PROMPT = (
     "You are a content guardrail. Inspect the DOCUMENT and respond with ONLY compact JSON: "
     '{"pii": true|false, "unsafe": true|false, "reason": "<= 12 words"}. '
@@ -272,12 +289,13 @@ def main():
     # promise (one bad input never fails the batch) at the chain level.
     if args.manifest_in:
         upstream = read_manifest(args.manifest_in)
-        if upstream.get("status") != "ok":
+        chained = chained_input(upstream, args.manifest_in)
+        if chained is None:
             reason = upstream.get("reason", "")
-            log.warning("upstream %s: %s - nothing to do", upstream.get("status"), reason)
-            print(f"SKIPPED - upstream {upstream.get('status')}: {reason}")
+            log.warning("upstream rejected: %s - nothing to do", reason)
+            print(f"SKIPPED - upstream rejected: {reason}")
             return
-        args.in_path = upstream["report_path"]
+        args.in_path = chained
         log.info("chained input from manifest: %s", args.in_path)
 
     with open(args.in_path, "r", encoding="utf-8") as f:
