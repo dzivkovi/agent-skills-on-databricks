@@ -8,7 +8,9 @@ docs/skill-reuse-on-databricks.md).
     -> /Volumes/<catalog>/<schema>/skills/document-insights/  (SKILL.md + scripts/...)
 
 Update flow: re-run this after editing the skill; consumers pick up the new version on their
-next run. No per-consumer redeploy.
+next run. No per-consumer redeploy. Publish is a MIRROR: a file you renamed or deleted locally
+is removed from the volume too, so a stale file can never linger and get consumed (issue #10 -
+a leftover run.py did exactly that during the #21 refactor).
 """
 import argparse
 import os
@@ -30,15 +32,16 @@ def ensure_skills_volume(w, catalog, schema):
             raise
 
 
-def upload_skill_folder(w, skill_dir, dest_root) -> int:
-    """Mirror one skill folder to dest_root on the volume; return the file count uploaded.
+def upload_skill_folder(w, skill_dir, dest_root) -> set:
+    """Upload one skill folder to dest_root on the volume; return the set of relative paths
+    published (the source of truth prune_stale mirrors against).
 
     Skips __pycache__/.git and compiled .pyc so caches never reach the shared volume. Each
     skill goes to its OWN dest_root, so publishing one skill never touches another's files -
     the isolation the multi-skill pattern (#6) depends on. Testable without a live workspace:
     pass any object whose files.upload(dest, fh, overwrite) does the write.
     """
-    count = 0
+    published = set()
     for root, dirs, files in os.walk(skill_dir):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for fname in files:
@@ -46,12 +49,38 @@ def upload_skill_folder(w, skill_dir, dest_root) -> int:
                 continue
             local = os.path.join(root, fname)
             rel = os.path.relpath(local, skill_dir).replace(os.sep, "/")
-            dest = f"{dest_root}/{rel}"
             with open(local, "rb") as fh:
-                w.files.upload(dest, fh, overwrite=True)
+                w.files.upload(f"{dest_root}/{rel}", fh, overwrite=True)
             print(f"  {rel}")
-            count += 1
-    return count
+            published.add(rel)
+    return published
+
+
+def _volume_files(w, root):
+    """Every file path under a volume directory, recursively. Empty when root does not exist."""
+    found, stack = [], [root]
+    while stack:
+        try:
+            entries = list(w.files.list_directory_contents(stack.pop()))
+        except Exception:  # noqa: BLE001 - a missing dir (first publish) just means nothing to prune
+            continue
+        for e in entries:
+            (stack if getattr(e, "is_directory", False) else found).append(e.path)
+    return found
+
+
+def prune_stale(w, dest_root, published) -> list:
+    """Delete volume files under dest_root that the latest publish did NOT write, so the
+    published skill is a true mirror of the source. Scoped to this skill's own dest_root, so it
+    can never touch another skill. Returns the paths removed."""
+    keep = {f"{dest_root}/{rel}" for rel in published}
+    removed = []
+    for path in _volume_files(w, dest_root):
+        if path not in keep:
+            w.files.delete(path)
+            print(f"  pruned {path[len(dest_root) + 1:]}")
+            removed.append(path)
+    return removed
 
 
 def main():
@@ -68,9 +97,12 @@ def main():
     name = os.path.basename(os.path.normpath(args.skill_dir))
     dest_root = f"/Volumes/{args.catalog}/{args.schema}/skills/{name}"
 
-    count = upload_skill_folder(w, args.skill_dir, dest_root)
+    published = upload_skill_folder(w, args.skill_dir, dest_root)
+    removed = prune_stale(w, dest_root, published)
 
-    print(f"\nPUBLISHED {count} files -> {dest_root}")
+    print(f"\nPUBLISHED {len(published)} files -> {dest_root}")
+    if removed:
+        print(f"PRUNED {len(removed)} stale file(s) no longer in the source")
     print(f"Consume it from any job with:  --skill-dir {dest_root}")
 
 

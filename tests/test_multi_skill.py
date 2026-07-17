@@ -85,7 +85,12 @@ def test_job_selects_skill_by_dir_and_gets_distinct_behavior():
     assert any("flesch" in k for k in rb), f"readability should expose a flesch score, got {list(rb)}"
 
 
-# --- Fake UC volume: files.upload mirrors the /Volumes/... path under a temp root -------------
+# --- Fake UC volume: files.upload mirrors the /Volumes/... path under a temp root. Also
+#     supports the list + delete that publish_skill.prune_stale needs, so the mirror behavior
+#     (#10) is testable without a live workspace. -----------------------------------------------
+import types
+
+
 class _FakeFiles:
     def __init__(self, root: Path):
         self.root = root
@@ -94,6 +99,16 @@ class _FakeFiles:
         out = self.root / dest.lstrip("/")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(fh.read())
+
+    def list_directory_contents(self, path: str):
+        base = self.root / path.lstrip("/")
+        for p in (sorted(base.iterdir()) if base.exists() else []):
+            yield types.SimpleNamespace(
+                path="/" + str(p.relative_to(self.root)).replace("\\", "/"),
+                is_directory=p.is_dir())
+
+    def delete(self, path: str):
+        (self.root / path.lstrip("/")).unlink()
 
 
 class _FakeW:
@@ -115,7 +130,7 @@ def test_two_skills_publish_independently_and_update_is_isolated(tmp_path):
 
     n_di = publish_skill.upload_skill_folder(w, ROOT / "skills" / "document-insights", di_root)
     n_rb = publish_skill.upload_skill_folder(w, ROOT / "skills" / "readability", rb_root)
-    assert n_di > 0 and n_rb > 0
+    assert n_di and n_rb                       # returns the SET of published relative paths
 
     di_files = _published_files(volume, di_root)
     rb_files = _published_files(volume, rb_root)
@@ -128,6 +143,35 @@ def test_two_skills_publish_independently_and_update_is_isolated(tmp_path):
     publish_skill.upload_skill_folder(w, ROOT / "skills" / "document-insights", di_root)
     assert _published_files(volume, rb_root) == rb_snapshot, \
         "republishing one skill must not touch another skill's published files"
+
+
+def test_republish_prunes_a_file_removed_from_the_source(tmp_path):
+    # #10: publish is a MIRROR. A file that was published once but then deleted from the source
+    # must be removed from the volume on the next publish - otherwise a stale file (a renamed
+    # script, a leftover run.py) lingers and can still be consumed.
+    volume = tmp_path / "vol"
+    w = _FakeW(volume)
+    dest = f"/Volumes/workspace/genai/skills/toy"
+
+    skill = tmp_path / "toy"
+    (skill / "scripts").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: toy\ndescription: x\n---\n", encoding="utf-8")
+    (skill / "scripts" / "analyze.py").write_text("def analyze(t):\n    return {'n': len(t)}\n", encoding="utf-8")
+    (skill / "scripts" / "stale.py").write_text("# will be removed\n", encoding="utf-8")
+
+    published = publish_skill.upload_skill_folder(w, skill, dest)
+    publish_skill.prune_stale(w, dest, published)
+    assert Path("scripts/stale.py") in _published_files(volume, dest)   # present after first publish
+
+    # Author deletes stale.py, then republishes.
+    (skill / "scripts" / "stale.py").unlink()
+    published = publish_skill.upload_skill_folder(w, skill, dest)
+    removed = publish_skill.prune_stale(w, dest, published)
+
+    on_volume = _published_files(volume, dest)
+    assert Path("scripts/stale.py") not in on_volume, "prune must remove the file gone from source"
+    assert Path("SKILL.md") in on_volume and Path("scripts/analyze.py") in on_volume
+    assert any(p.endswith("scripts/stale.py") for p in removed)
 
 
 def test_upload_skill_folder_skips_pyc_and_pycache(tmp_path):
