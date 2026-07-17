@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -39,7 +40,15 @@ def _load(skill_dir: str, module_file: str, attr: str):
             f"'{attr}' adapter needs. Wrong --adapter for this skill?")
     spec = importlib.util.spec_from_file_location(f"skill_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Read-only means read-only: importing normally would have CPython drop a __pycache__ beside
+    # the skill's source ON THE VOLUME, so the job would be mutating the published skill folder
+    # it promised not to touch. Suppress it for the skill's import only, then restore.
+    was = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = was
     return getattr(module, attr)
 
 

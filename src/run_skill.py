@@ -7,7 +7,7 @@ with a uniform contract. The runner supplies the PLUMBING - read the input, guar
 (structural + LLM content guard, reject queue), resolve the model, provide a retrying LLM
 client and a collision-proof output name - then dispatches to the skill's own entrypoint:
 
-    skills/<name>/scripts/run.py :: run(ctx) -> output_path
+    src/adapters.py :: ADAPTERS[<name>](ctx) -> output_path
 
 The skill is READ-ONLY: you bring the same folder Claude Code uses and change nothing about it.
 Everything Databricks-specific is an ADAPTER in the harness (see adapters.py), chosen per task

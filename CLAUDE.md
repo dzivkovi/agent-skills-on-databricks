@@ -67,7 +67,7 @@ archive, and therefore any .pptx/.xlsx/.docx - fails at close() with `OSError er
 error) or `errno 95` (operation not supported) when written straight to `/Volumes/...`. Build
 such artifacts in memory (BytesIO) or on local disk, then write the finished bytes in one
 sequential write. Plain markdown/text writes are unaffected. Found live in the #2 e2e; the fix
-belongs in the skill's own `scripts/run.py` adapter, never in the portable builder or the runner.
+belongs in the harness adapter (`src/adapters.py`), never in the skill or the runner's plumbing.
 
 ## Git Bash traps (Windows)
 
