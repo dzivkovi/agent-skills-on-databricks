@@ -78,6 +78,9 @@ resources:
             environment_version: "3"   # serverless env version (was the deprecated `client` field)
             dependencies:
               - requests
+              # branded-pptx builds a real .pptx on serverless. python-pptx is pure Python but
+              # pulls lxml/Pillow (compiled); serverless resolves them from manylinux wheels.
+              - python-pptx
             # Enterprise / air-gapped note: in locked-down workspaces there is no
             # open PyPI. Point dependency resolution at your internal Artifactory/Nexus
             # by setting PIP_INDEX_URL / PIP_EXTRA_INDEX_URL / PIP_TRUSTED_HOST as
