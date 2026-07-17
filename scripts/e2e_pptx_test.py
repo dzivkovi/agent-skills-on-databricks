@@ -104,60 +104,68 @@ def main():
     w.files.upload(in_path, io.BytesIO(DOC.format(token=token).encode("utf-8")), overwrite=True)
     step(f"uploaded {in_path}")
 
-    # 2) TRIGGER the deployed job pointed at the branded-pptx skill on the volume.
-    deployed = list(w.jobs.get(job_id=job_id).settings.tasks[0].spark_python_task.parameters or [])
-    params = override(deployed, "--skill-dir", skill_dir)
-    params = override(params, "--in-path", in_path)
-    params = override(params, "--out-dir", out_dir)
-    step("triggering job run and waiting for terminal state...")
-    run = w.jobs.run_now(job_id=job_id, python_params=params).result(
-        timeout=datetime.timedelta(minutes=args.timeout_min))
-    state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
-    step(f"run finished: result_state={state}  url={run.run_page_url}")
-    if state != "SUCCESS":
-        print(f"\nRESULT: FAIL - job run did not succeed (state={state})")
+    # Everything after the upload runs under try/finally so the shared volumes are cleaned up on
+    # EVERY exit - including the one that matters most: a corrupt deck that fails to reopen (the
+    # exact regression this test exists to catch) raises out of Presentation(), and without this
+    # the debris would pile up on the volume precisely when the test is doing its job.
+    out_path = None
+    try:
+        # 2) TRIGGER the deployed job pointed at the branded-pptx skill on the volume.
+        deployed = list(w.jobs.get(job_id=job_id).settings.tasks[0].spark_python_task.parameters or [])
+        params = override(deployed, "--skill-dir", skill_dir)
+        params = override(params, "--in-path", in_path)
+        params = override(params, "--out-dir", out_dir)
+        step("triggering job run and waiting for terminal state...")
+        run = w.jobs.run_now(job_id=job_id, python_params=params).result(
+            timeout=datetime.timedelta(minutes=args.timeout_min))
+        state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
+        step(f"run finished: result_state={state}  url={run.run_page_url}")
+        if state != "SUCCESS":
+            print(f"\nRESULT: FAIL - job run did not succeed (state={state})")
+            return 1
+
+        # 3) GET the deck. The skill names it <stem>-branded-pptx-<date>.pptx (skill-namespaced).
+        expected = f"{stem}-branded-pptx"
+        matches = [e.path for e in w.files.list_directory_contents(out_dir)
+                   if e.path.rsplit("/", 1)[-1].startswith(expected) and e.path.endswith(".pptx")]
+        if len(matches) != 1:
+            print(f"\nRESULT: FAIL - expected exactly one '{expected}*.pptx' in the output, got {matches}")
+            return 1
+        out_path = matches[0]
+        data = w.files.download(out_path).contents.read()
+        step(f"downloaded {out_path} ({len(data)} bytes)")
+
+        # 4) ASSERT it is a REAL deck by reopening it - the whole point of this test. A name check
+        #    would pass on a truncated file; python-pptx parsing it means PowerPoint can open it.
+        prs = Presentation(io.BytesIO(data))
+        text = "\n".join(sh.text_frame.text for s in prs.slides for sh in s.shapes if sh.has_text_frame)
+        checks = {
+            "deck reopens with python-pptx": True,          # reaching here means it parsed
+            "title slide + one slide per H2 (3 slides)": len(prs.slides) == 3,
+            "title carries the H1": f"Platform Update {token}" in text,
+            "H2 sections became slides": "Highlights" in text and "Next" in text,
+            "list items became bullets": "publish once to a shared volume" in text,
+        }
+        for name, ok in checks.items():
+            print(f"    assert {name}: {'ok' if ok else 'FAILED'}")
+
+        if all(checks.values()):
+            print(f"\nRESULT: PASS - branded-pptx ran on serverless and produced a real deck "
+                  f"({time.time()-started:.1f}s)")
+            return 0
+        print("\nRESULT: FAIL - one or more assertions failed")
         return 1
-
-    # 3) GET the deck. The skill names it <stem>-branded-pptx-<date>.pptx (skill-namespaced).
-    expected = f"{stem}-branded-pptx"
-    matches = [e.path for e in w.files.list_directory_contents(out_dir)
-               if e.path.rsplit("/", 1)[-1].startswith(expected) and e.path.endswith(".pptx")]
-    if len(matches) != 1:
-        print(f"\nRESULT: FAIL - expected exactly one '{expected}*.pptx' in the output, got {matches}")
-        return 1
-    out_path = matches[0]
-    data = w.files.download(out_path).contents.read()
-    step(f"downloaded {out_path} ({len(data)} bytes)")
-
-    # 4) ASSERT it is a REAL deck by reopening it - the whole point of this test. A name check
-    #    would pass on a truncated file; python-pptx parsing it means PowerPoint can open it.
-    prs = Presentation(io.BytesIO(data))
-    text = "\n".join(sh.text_frame.text for s in prs.slides for sh in s.shapes if sh.has_text_frame)
-    checks = {
-        "deck reopens with python-pptx": True,          # reaching here means it parsed
-        "title slide + one slide per H2 (3 slides)": len(prs.slides) == 3,
-        "title carries the H1": f"Platform Update {token}" in text,
-        "H2 sections became slides": "Highlights" in text and "Next" in text,
-        "list items became bullets": "publish once to a shared volume" in text,
-    }
-    for name, ok in checks.items():
-        print(f"    assert {name}: {'ok' if ok else 'FAILED'}")
-
-    # 5) CLEAN UP (best effort) unless --keep.
-    if not args.keep:
-        for p in (in_path, out_path):
-            try:
-                w.files.delete(p)
-            except Exception as e:  # noqa: BLE001 - cleanup is best-effort
-                step(f"cleanup warning for {p}: {e}")
-        step("cleaned up test files")
-
-    if all(checks.values()):
-        print(f"\nRESULT: PASS - branded-pptx ran on serverless and produced a real deck "
-              f"({time.time()-started:.1f}s)")
-        return 0
-    print("\nRESULT: FAIL - one or more assertions failed")
-    return 1
+    finally:
+        # 5) CLEAN UP (best effort) unless --keep. out_path is None when the run never produced one.
+        if not args.keep:
+            for p in (in_path, out_path):
+                if not p:
+                    continue
+                try:
+                    w.files.delete(p)
+                except Exception as e:  # noqa: BLE001 - cleanup is best-effort
+                    step(f"cleanup warning for {p}: {e}")
+            step("cleaned up test files")
 
 
 if __name__ == "__main__":
