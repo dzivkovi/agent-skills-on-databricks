@@ -13,6 +13,17 @@ The skill owns its behavior and output shape: document-insights and readability 
 two-section markdown report (exact metrics + LLM reading); branded-pptx writes a real .pptx.
 The runner never assumes an output shape. Contract details: skills/README.md.
 
+CHAINING (--manifest-out / --manifest-in). Two runs of this same runner form a pipeline: an
+upstream task writes a run-scoped manifest, a downstream task reads it and works on whatever
+the upstream produced. The manifest carries STATUS, never just a path:
+
+    {"status": "ok",       "report_path": "...", "skill": "...", "model": "..."}
+    {"status": "rejected", "reason": "content guardrail flagged pii: ..."}
+
+Status is the whole point. A quarantined input produces NO output, so a downstream task must
+SKIP rather than explode - that is what keeps the reject-queue promise (one bad input never
+fails the batch) true for an entire chain, not just a single task.
+
 Watch both halves: set LOG_LEVEL=DEBUG (env) or pass --log-level DEBUG.
 Auth is ambient (WorkspaceClient); no secrets in this file.
 """
@@ -168,6 +179,28 @@ def write_rejected(rejected_dir: str, in_path: str, source: str, reason: str) ->
     return f"{rejected_dir}/{base}"
 
 
+def write_manifest(manifest_path: str, payload: dict) -> None:
+    """Write the run-scoped handoff manifest for a downstream task.
+
+    Why a manifest and not something cleverer: dbutils.jobs.taskValues is documented
+    notebook-only (unavailable in a spark_python_task); recomputing the upstream's dated
+    filename breaks when a run straddles UTC midnight; globbing the newest file is brittle
+    under retries and concurrent runs. A file the upstream writes and the downstream reads has
+    none of those failure modes, and it carries status + provenance for free.
+    """
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    log.info("manifest -> %s (%s)", manifest_path, payload.get("status"))
+
+
+def read_manifest(manifest_path: str) -> dict:
+    """Read the upstream task's manifest. Missing or unparseable is a hard error: the job
+    graph promised this file exists, so a downstream task must not quietly invent an input."""
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 CONTENT_GUARD_PROMPT = (
     "You are a content guardrail. Inspect the DOCUMENT and respond with ONLY compact JSON: "
     '{"pii": true|false, "unsafe": true|false, "reason": "<= 12 words"}. '
@@ -216,6 +249,13 @@ def main():
     parser.add_argument("--out-dir", default="/Volumes/workspace/genai/output")
     parser.add_argument("--rejected-dir", default="/Volumes/workspace/genai/rejected",
                         help="Dead-letter queue: bad/blocked inputs are quarantined here (never fail the batch).")
+    parser.add_argument("--manifest-out", default=None,
+                        help="Chain: write a run-scoped handoff manifest here (status + the path "
+                             "this task produced) for a downstream task to read.")
+    parser.add_argument("--manifest-in", default=None,
+                        help="Chain: read an upstream task's manifest and work on what it "
+                             "produced. Overrides --in-path. If the upstream rejected its input, "
+                             "this task SKIPS and succeeds - the batch must not fail.")
     parser.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))
     args = parser.parse_args()
 
@@ -226,6 +266,19 @@ def main():
 
     skill_dir = Path(args.skill_dir)
     log.info("running skill at %s", skill_dir)
+
+    # CHAIN, downstream half: take the input from the upstream task's manifest. A rejected
+    # upstream produced nothing, so skip and SUCCEED - failing here would break the reject-queue
+    # promise (one bad input never fails the batch) at the chain level.
+    if args.manifest_in:
+        upstream = read_manifest(args.manifest_in)
+        if upstream.get("status") != "ok":
+            reason = upstream.get("reason", "")
+            log.warning("upstream %s: %s - nothing to do", upstream.get("status"), reason)
+            print(f"SKIPPED - upstream {upstream.get('status')}: {reason}")
+            return
+        args.in_path = upstream["report_path"]
+        log.info("chained input from manifest: %s", args.in_path)
 
     with open(args.in_path, "r", encoding="utf-8") as f:
         source = f.read()
@@ -240,6 +293,8 @@ def main():
         problem = f"input too large ({len(source)} chars > {MAX_INPUT_CHARS} limit)"
     if problem:
         dest = write_rejected(args.rejected_dir, args.in_path, source, problem)
+        if args.manifest_out:
+            write_manifest(args.manifest_out, {"status": "rejected", "reason": problem})
         log.warning("REJECTED %s -> %s (%s)", args.in_path, dest, problem)
         print(f"REJECTED {args.in_path} -> {dest} ({problem})")
         return
@@ -259,6 +314,8 @@ def main():
     flagged, guard_reason = guard_content(w, model, source)
     if flagged:
         dest = write_rejected(args.rejected_dir, args.in_path, source, guard_reason)
+        if args.manifest_out:
+            write_manifest(args.manifest_out, {"status": "rejected", "reason": guard_reason})
         log.warning("REJECTED %s -> %s (%s)", args.in_path, dest, guard_reason)
         print(f"REJECTED {args.in_path} -> {dest} ({guard_reason})")
         return
@@ -287,6 +344,9 @@ def main():
         "today": today,
     }
     out_path = run(ctx)
+    if args.manifest_out:
+        write_manifest(args.manifest_out, {"status": "ok", "report_path": out_path,
+                                           "skill": skill_name, "model": model})
     log.info("WROTE %s", out_path)
     print(f"READ  {args.in_path}")
     print(f"WROTE {out_path}")

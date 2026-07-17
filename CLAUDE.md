@@ -22,6 +22,22 @@ changing a skill, republish it: python scripts/publish_skill.py skills/<name> --
 When a change spans the runner AND skills, republish the skills FIRST (additive - the old
 runner ignores new files), then databricks bundle deploy.
 
+## Chaining skills (the report_to_deck job)
+
+A chain is not a new program: it is two runs of the SAME runner with different `--skill-dir`.
+The upstream task writes a run-scoped manifest (`--manifest-out .../_runs/{{job.run_id}}/manifest.json`),
+the downstream task reads it (`--manifest-in <same path>`) and works on whatever the upstream
+produced. The manifest carries STATUS, not just a path, so a quarantined input makes the
+downstream task SKIP and succeed - the reject queue's promise held across a chain.
+
+Do not reach for the alternatives: `dbutils.jobs.taskValues` is documented notebook-only and
+does not exist in a `spark_python_task`; recomputing the upstream's dated filename breaks when a
+run straddles UTC midnight; glob-newest is brittle under retries and concurrent runs.
+
+A multi-task job must be triggered with JOB parameters (`run_now(job_parameters={...})`), never
+`python_params` - the latter pushes identical argv into every task, and chained tasks by
+definition need different arguments.
+
 ## Unity Catalog volume traps
 
 Volumes support sequential writes, NOT random access. Anything that seeks while writing - a zip
