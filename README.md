@@ -12,23 +12,34 @@ small, honest steps (see [The MVP ladder](#the-mvp-ladder)).
 ## Mental model (read this first)
 
 ```text
-  you / a user                Databricks (cloud)                     you / a user
-  -----------                 ------------------                     -----------
-  drop a document   ->   INPUT volume                                    ^
-                              |                                          |
-                              v                                          |
-                         Lakeflow Job (weekly, or on demand)             |
-                              |  calls a model hosted INSIDE Databricks  |
-                              v                                          |
-                         OUTPUT volume  ------ download -----------------+
+  you / a user                    Databricks (cloud)                    you / a user
+  -----------                     ------------------                    -----------
+
+  publish a skill  ->  SKILLS volume  (published once, reused by any job)
+  (change nothing)           |
+                             |  the job reads the skill from here: --skill-dir
+                             v
+  drop a document  ->  INPUT volume  ->  Lakeflow Job  ->  OUTPUT volume  -> download
+                                              |            (report, .pptx)        |
+                                              |                                   |
+                        guard says no ->  REJECTED volume + a written reason      |
+                        (batch still SUCCEEDS)                                    v
+                                                                          you / a user
+
+  Chained (one job, two tasks, the SAME runner - only --skill-dir, --adapter and a
+  run-scoped manifest differ between them):
+      document  ->  [analyze skill]  ->  report.md  ->  [branded-pptx skill]  ->  deck.pptx
 ```
 
-- **Unity Catalog volume** = a governed folder of files. Three here: `workspace.genai.input`
-  (drop documents in), `workspace.genai.output` (pick results up), and `workspace.genai.rejected`
-  (a dead-letter queue - bad/blocked inputs land here without failing the batch; see
-  [docs/guardrails-and-dead-letter-queue.md](docs/guardrails-and-dead-letter-queue.md)).
-- **Lakeflow Job** = tasks + an optional schedule. Ours has one Python task and a
-  weekly timer that ships PAUSED (you trigger it by hand until you trust it).
+- **Unity Catalog volume** = a governed folder of files. Four here: `workspace.genai.input`
+  (drop documents in), `workspace.genai.output` (pick results up), `workspace.genai.rejected`
+  (a reject queue - bad or blocked inputs land here without failing the batch; see
+  [docs/guardrails-and-dead-letter-queue.md](docs/guardrails-and-dead-letter-queue.md)), and
+  `workspace.genai.skills` (skills published once and consumed by any job, so updating a skill
+  needs no redeploy; see [docs/skill-reuse-on-databricks.md](docs/skill-reuse-on-databricks.md)).
+- **Lakeflow Job** = tasks + an optional schedule. Two jobs ship here: `mvp0_weekly_report` runs
+  a single skill and carries a weekly timer that ships PAUSED (you trigger it by hand until you
+  trust it); `report_to_deck` chains two skills and is on demand only.
 - **LLM inside Databricks** = a Foundation Model API endpoint (`databricks-...`).
   No Anthropic/OpenAI key ever leaves the workspace.
 - **Databricks Asset Bundle (DAB)** = infrastructure-as-code. One `databricks.yml`
@@ -70,13 +81,16 @@ harness.
 
 ## One-time setup: create the volumes
 
-Unity Catalog hierarchy is `catalog -> schema -> volume`. One idempotent command creates
-the schema + both volumes (safe to re-run):
+Unity Catalog hierarchy is `catalog -> schema -> volume`. One idempotent command creates the
+schema plus the three I/O volumes - `input`, `output`, `rejected` (safe to re-run):
 
 ```bash
 python scripts/setup_uc.py --profile coldstart
 # defaults: --catalog workspace --schema genai (must match the databricks.yml variables)
 ```
+
+The fourth volume, `skills`, is created for you the first time you publish a skill
+(`scripts/publish_skill.py`), so there is nothing to set up for it here.
 
 ## Deploy and run
 
@@ -272,12 +286,13 @@ This repo is honest about what works where. It grows in stages:
 | --- | --- | --- |
 | **MVP-0** | input doc -> LLM -> output doc (plumbing only, no skill) | done |
 | **MVP-1** | run a real skill: **document-insights** - deterministic metrics (code) + sentiment/themes (LLM), labeled by half | working (this repo) |
-| **MVP-2** | the **branded-pptx** skill, re-cut in pure-Python `python-pptx`, to emit a real `.pptx` on free serverless | done - live on serverless, and chained: a document becomes a report and then a deck in one job |
-| **MVP-3** | run branded-pptx **faithfully** - the self-correcting vision-in-the-loop QA (Node + LibreOffice) | not started - needs a paid tier + classic compute ([#5](https://github.com/dzivkovi/agent-skills-on-databricks/issues/5)) |
+| **MVP-2** | a **builder** skill: **branded-pptx** re-cut in pure-Python `python-pptx`, emitting a real `.pptx` on free serverless | done - live on serverless |
+| **MVP-3** | **skills as composable units**: publish once to a shared volume and reuse from any job, then chain them - a document becomes a report and then a deck, in one job | done - live, both the happy path and the reject path |
+| **MVP-4** | run branded-pptx **faithfully** - the self-correcting vision-in-the-loop QA (Node + LibreOffice) | blocked on infrastructure, not effort: needs a paid tier + classic compute ([#5](https://github.com/dzivkovi/agent-skills-on-databricks/issues/5)) |
 
-Why the staging: branded-pptx's real engine (Node `pptxgenjs` + LibreOffice + a vision QA
-loop) cannot run on Databricks Free Edition, which is serverless-only. See
-[`skills/README.md`](skills/README.md) for the full explanation.
+Why MVP-4 is last: branded-pptx's real engine (Node `pptxgenjs` + LibreOffice + a vision QA
+loop) cannot run on Databricks Free Edition, which is serverless-only. Everything up to MVP-3
+runs on the free tier today. See [`skills/README.md`](skills/README.md) for the full explanation.
 
 ### How the LLM and agents are invoked here (pure Databricks)
 

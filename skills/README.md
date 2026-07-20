@@ -98,7 +98,7 @@ Each adapter receives a frozen `ctx` dict:
 The DAB passes the skill's published volume path via `--skill-dir /Volumes/<catalog>/<schema>/skills/<name>`
 (serverless runs the task with no `__file__`, so the path is passed in explicitly).
 
-## branded-pptx (MVP-2 shipped; MVP-3 later)
+## branded-pptx (MVP-2 shipped; MVP-4 needs paid compute)
 
 branded-pptx turns a markdown document into a branded PowerPoint deck. Its faithful engine is
 `pptxgenjs` (Node.js) + LibreOffice + Poppler with a multimodal vision-in-the-loop QA cycle -
@@ -106,9 +106,11 @@ branded-pptx turns a markdown document into a branded PowerPoint deck. Its faith
 So the ladder:
 
 - **MVP-2** ([`branded-pptx/`](branded-pptx/), in this repo) re-cuts it in pure-Python `python-pptx`:
-  lower fidelity, no vision loop, deterministic and testable. Wiring it into the serverless job
-  (python-pptx as a runtime dependency + a live e2e run) is tracked in issue #2.
-- **MVP-3** runs it faithfully on a paid tier with classic compute (the self-correcting vision loop).
+  lower fidelity, no vision loop, deterministic and testable. Live on serverless.
+- **MVP-4** runs it faithfully on a paid tier with classic compute (the self-correcting vision loop).
+
+MVP-3 sits between them and is not about this skill at all: it is composition, publishing skills
+once to a shared volume and chaining them into one job. That is why MVP-4 is the fidelity rung.
 
 ## Reuse note
 

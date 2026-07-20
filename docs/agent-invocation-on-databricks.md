@@ -6,7 +6,7 @@ always served inside the platform.** You do not need - and would not normally us
 
 ## The question
 
-The MVP ladder originally said MVP-3 would run a skill "faithfully ... + Claude Agent SDK". That was
+The MVP ladder originally said the faithful rung (now MVP-4) would run a skill "faithfully ... + Claude Agent SDK". That was
 wrong for a Databricks-native project. The correction below is verified against official docs.
 
 ## Three layers, all Databricks-native
@@ -43,7 +43,7 @@ wrong for a Databricks-native project. The correction below is verified against 
     still inside Databricks - **no vendor intermixing at the model layer**; and
   - the Databricks-native alternative is to build that loop yourself in Python (call the
     Databricks Claude vision endpoint, own the retry logic) or re-cut the skill as a plain job -
-    which is exactly the MVP-2 approach. So MVP-3 does not require the Claude Agent SDK.
+    which is exactly the MVP-2 approach. So MVP-4 does not require the Claude Agent SDK.
 
 ## Bottom line for this repo
 

@@ -3,7 +3,7 @@ Deterministic markdown -> branded .pptx, pure Python via python-pptx.
 
 MVP-2 in the branded-pptx ladder: it runs on Databricks Free Edition serverless (no Node, no
 LibreOffice, no system packages). Lower fidelity than the faithful engine (pptxgenjs + LibreOffice
-+ a vision-in-the-loop QA cycle, which MVP-3 restores on paid classic compute): here the layout is
++ a vision-in-the-loop QA cycle, which MVP-4 restores on paid classic compute): here the layout is
 a straight structural map from the markdown, with a light brand skin (accent colour + footer). No
 LLM and no vision QA - the deck is a pure function of the markdown, which is exactly what makes it
 testable and serverless-safe.

@@ -4,21 +4,24 @@ In Claude Code you install a skill once (`~/.claude/skills/<name>/`) and every p
 machine can use it. This doc is the Databricks equivalent: how to publish a skill folder ONCE and
 have any job/notebook reuse it, updated in one place - instead of bundling a copy into every project.
 
-## What this repo does today (and its limit)
+## What this repo does today
 
-The skill is bundled with the Databricks Asset Bundle, so `bundle deploy` uploads it to
-`/Workspace/.../.bundle/<bundle>/files/skills/<name>/` next to the job, and the runner imports it
-from there. Simplest for a single project, but: the skill is **duplicated** into every project that
-reuses it, and **updating it means redeploying** every consumer. Fine for a hello-world, wrong for
-real reuse.
+Skills are **published once to a shared Unity Catalog volume** and consumed from there by path
+(`--skill-dir /Volumes/<catalog>/<schema>/skills/<name>`). `databricks.yml` excludes `skills/`
+from the bundle entirely, so the deployed job carries no copy. Edit a skill, re-run
+`scripts/publish_skill.py`, and the next run of every consumer picks it up with no redeploy.
+
+That is option B below. The repo started on option C (bundling a copy per project), which
+duplicated the skill into every consumer and required a redeploy to update one - fine for a
+hello-world, wrong for real reuse. Option B replaced it.
 
 ## The mechanisms, ranked (serverless - Free Edition is serverless-only)
 
 | Approach | Install once? | Versioned? | Update flow | Ceremony |
 | --- | --- | --- | --- | --- |
 | **A. Wheel on a UC Volume, as a job dependency** | yes | yes (wheel version) | rebuild + upload wheel; jobs pin or float | medium |
-| **B. Skill folder on a UC Volume + `sys.path.append`** | yes | no (mutable folder) | edit the folder; next run picks it up | low |
-| **C. Bundle in the DAB** (current) | no (per-project copy) | via git | redeploy each consumer | lowest |
+| **B. Skill folder on a UC Volume** (current) | yes | no (mutable folder) | edit the folder; next run picks it up | low |
+| **C. Bundle in the DAB** (what this repo started with) | no (per-project copy) | via git | redeploy each consumer | lowest |
 
 ### A. Recommended for real reuse - a wheel on a shared UC Volume
 
@@ -68,14 +71,14 @@ edit the skill, re-run `publish_skill.py`, and the next job run picks it up with
 
 ### C. Keep bundling - for a single project
 
-What this repo does now. Correct when the skill lives with exactly one job and you want the whole
-thing to deploy and version together as code.
+What this repo started with, and still the right answer when a skill lives with exactly one job
+and you want the whole thing to deploy and version together as code.
 
 ## Security: the skills volume is a code-execution trust boundary
 
 Read this before anyone asks. Decoupling the skill onto a shared volume is convenient, but it
 moves a trust boundary: the runner imports and **executes** the skill's `scripts/analyze.py`
-from `--skill-dir` (see `load_skill_analyze` in [`src/run_skill.py`](../src/run_skill.py)). Whoever
+from `--skill-dir` (see the adapters in [`src/adapters.py`](../src/adapters.py)). Whoever
 can WRITE that volume path can run arbitrary code inside the job's identity - read the workspace,
 reach any endpoint the job can, exfiltrate the input documents. With the bundled option (C) the
 skill is reviewed and shipped as code; with A/B the gate becomes the volume's Unity Catalog ACL.
@@ -106,8 +109,9 @@ skills on a locked-down volume, B is a reasonable, governed choice.
 - A skill shared by several jobs, changing occasionally: **UC Volume + `sys.path` (B)**.
 - A skill shared widely, needing real versioning and clean updates: **wheel on a UC Volume (A)**.
 
-Migrating this repo to A/B is a small change (publish the skill to a volume, point `--skill-dir` or
-the dependency at it) - a good MVP once a second job wants the same skill.
+This repo made that move: it runs on B, because a second and third skill arrived and two jobs now
+consume them. Going further to A (a versioned, signed wheel) is the step worth taking when skills
+are shared beyond one team, or when an untrusted publisher is possible.
 
 ## Rough edges vs Claude Code (support-ticket / feature-request candidates)
 

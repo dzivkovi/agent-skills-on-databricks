@@ -12,7 +12,7 @@ metadata:
 The MVP-2 rung of the branded-pptx ladder. It re-cuts the faithful branded-pptx skill in pure
 Python so it runs on Free Edition serverless. The faithful engine (pptxgenjs on Node + LibreOffice
 + Poppler, with a multimodal vision-in-the-loop QA cycle) needs Node and system packages that
-serverless does not have; MVP-3 restores it on paid classic compute. MVP-2 trades that fidelity
+serverless does not have; MVP-4 restores it on paid classic compute. MVP-2 trades that fidelity
 for portability: a deterministic markdown-to-slides map with a light brand skin, no vision QA.
 
 ## How to run this skill
@@ -37,7 +37,7 @@ A valid `.pptx` (openable by PowerPoint / Keynote / Google Slides / python-pptx)
 
 Brands are a skin only (accent colour + footer label), defined in `BRANDS` in the build script -
 add one there without touching the layout code. This is intentionally low fidelity: it is a
-correct, serverless-safe deck, not a pixel-perfect brand system (that is MVP-3's job).
+correct, serverless-safe deck, not a pixel-perfect brand system (that is MVP-4's job).
 
 ## Why this rung exists
 

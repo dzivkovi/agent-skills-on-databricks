@@ -43,7 +43,7 @@ inside the workspace.
 ## Upgrade path
 
 Enabling a paid tier unlocks the premium models (swap the `llm_endpoint` variable to
-`databricks-claude-opus-4-8`) and classic compute (needed for the faithful MVP-3).
+`databricks-claude-opus-4-8`) and classic compute (needed for the faithful MVP-4).
 
 ## Sources
 
