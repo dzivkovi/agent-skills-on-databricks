@@ -88,21 +88,26 @@ works; a bare `/Volumes/...` gets mangled into `C:\Program Files\Git\Volumes\...
 override selectively, read the deployed params first, the way
 [`../scripts/e2e_test.py`](../scripts/e2e_test.py) does.
 
-## One judgement call you should make deliberately
+## Pick a model per skill
 
-Your `SKILL.md` front-matter may pin a model, and the harness honors it unless the job passes
-`--model`:
+Different skills deserve different models. A deterministic extraction skill does not need a
+frontier model; a nuanced coaching skill might. Your `SKILL.md` front-matter can say which:
 
 ```yaml
 metadata:
   model: databricks-gpt-oss-120b
 ```
 
-`readability` does this to demonstrate per-skill model choice - **and it is a real tradeoff worth
-seeing.** A serving endpoint name is Databricks-specific, so pinning one couples an otherwise
-portable skill to this platform. Reading `SKILL.md` is always fine; the question is whether that
-*value* belongs in a folder you want to carry elsewhere. Prefer letting the job decide, unless a
-skill genuinely needs a particular model to be correct.
+`readability` does this; `document-insights` does not, and falls back to the default. Precedence
+is most-explicit-wins: an explicit `--model` on the job beats the skill's declaration, which
+beats the harness default.
+
+Naming a Databricks serving endpoint here is normal and expected. A skill author's model choice
+is a **recommendation**, and whoever deploys it picks what their own platform actually serves -
+the same way you would swap a model when installing any skill. So treat this line as a knob to
+turn on arrival, not as something to avoid: on the free tier it is `databricks-gpt-oss-120b`,
+and on a paid tier you change that one line to `databricks-claude-opus-4-8` and nothing else in
+the skill or the harness changes.
 
 ## Prove it, don't hope
 
