@@ -24,6 +24,14 @@ tests are green:
 Every new feature with a runtime surface adds (or extends) a scripts/e2e_*.py suite; smoke.py
 auto-discovers them, so coverage cannot silently lag the feature list.
 
+Two kinds of test, kept apart on purpose: tests/ is creds-free (every Databricks dependency is
+faked, so it runs anywhere with no workspace and no token), and scripts/e2e_*.py are live
+standalone scripts a bare pytest does not collect. If you ever add a test to tests/ that DOES
+need a real workspace, mark it @pytest.mark.integration so CI can run `pytest -m "not
+integration"`. The marker is registered in pytest.ini with strict_markers, which turns a typo
+into a collection error - without it a mistyped marker is only a warning and `-m "not
+integration"` then INCLUDES that test, so the workspace-dependent test runs in CI anyway.
+
 Never let a PR say "Closes #N" on local proof alone. If any acceptance criterion or premise is
 unverified against the deployed system, the PR says "Refs #N" and the ticket stays open until
 a live run proves it. (Lesson of 2026-07-16: "Closes #2" shipped while the skill had never run
