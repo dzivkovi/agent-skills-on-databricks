@@ -272,8 +272,8 @@ This repo is honest about what works where. It grows in stages:
 | --- | --- | --- |
 | **MVP-0** | input doc -> LLM -> output doc (plumbing only, no skill) | done |
 | **MVP-1** | run a real skill: **document-insights** - deterministic metrics (code) + sentiment/themes (LLM), labeled by half | working (this repo) |
-| **MVP-2** | the **branded-pptx** skill, re-cut in pure-Python `python-pptx`, to emit a real `.pptx` on free serverless | next |
-| **MVP-3** | run branded-pptx **faithfully** - the self-correcting vision-in-the-loop QA (Node + LibreOffice) | needs a paid tier + classic compute |
+| **MVP-2** | the **branded-pptx** skill, re-cut in pure-Python `python-pptx`, to emit a real `.pptx` on free serverless | done - live on serverless, and chained: a document becomes a report and then a deck in one job |
+| **MVP-3** | run branded-pptx **faithfully** - the self-correcting vision-in-the-loop QA (Node + LibreOffice) | not started - needs a paid tier + classic compute ([#5](https://github.com/dzivkovi/agent-skills-on-databricks/issues/5)) |
 
 Why the staging: branded-pptx's real engine (Node `pptxgenjs` + LibreOffice + a vision QA
 loop) cannot run on Databricks Free Edition, which is serverless-only. See
